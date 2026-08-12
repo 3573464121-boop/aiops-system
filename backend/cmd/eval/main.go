@@ -4,7 +4,7 @@
 //   full     —— Agent 工具循环 + 向量 RAG（BM25+向量 RRF）
 //   bm25     —— Agent 工具循环 + 仅 BM25 知识检索（关闭向量）
 //   no-agent —— 纯 LLM 单轮作答，不调用任何工具（无证据基线）
-// 指标：根因命中率、证据召回率、高风险审批标记正确率、平均置信度。
+// 指标：根因命中率、证据召回率、忠实度(LLM 判官)、幻觉率(LLM 判官)、高危标记正确率、平均置信度。
 package main
 
 import (
@@ -37,10 +37,12 @@ type Case struct {
 type result struct {
 	hitCause  bool
 	recall    float64
-	highRisk  bool // 实际是否标记了高风险需审批
-	highRatOK bool // 与期望是否一致
+	highRatOK bool
 	conf      float64
 	ms        int64
+	faith     float64
+	halluc    bool
+	judged    bool
 }
 
 func main() {
@@ -48,6 +50,7 @@ func main() {
 	datasetPath := flag.String("dataset", "eval/dataset.json", "评测数据集路径")
 	reportPath := flag.String("report", "eval/report.md", "报告输出路径")
 	limit := flag.Int("limit", 0, "只跑前 N 个案例（0=全部）")
+	judgeFlag := flag.Bool("judge", true, "用 LLM 判官评估忠实度/幻觉率")
 	flag.Parse()
 
 	raw, err := os.ReadFile(*datasetPath)
@@ -64,14 +67,12 @@ func main() {
 		cases = cases[:*limit]
 	}
 
-	kpath := env("KNOWLEDGE_PATH", "../README-原始需求.md")
-	index, err := knowledge.LoadMarkdown(kpath)
+	index, err := knowledge.LoadMarkdown(env("KNOWLEDGE_PATH", "../README-原始需求.md"))
 	if err != nil {
 		fmt.Println("知识库加载失败:", err)
 		os.Exit(1)
 	}
 
-	// 嵌入器 + 向量索引（供 full 配置使用）
 	embedder := &embed.Client{BaseURL: os.Getenv("EMBED_BASE_URL"), APIKey: os.Getenv("EMBED_API_KEY"), Model: os.Getenv("EMBED_MODEL")}
 	var embedFn func(string) ([]float32, error)
 	if embedder.Enabled() {
@@ -100,7 +101,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 各配置的诊断函数
 	fullSvc := app.New(tools.NewService(index, tools.DemoAlertProvider{}, tools.DemoLogProvider{}), llmClient)
 	fullSvc.Tools.Embed = embedFn
 	bm25Svc := app.New(tools.NewService(index, tools.DemoAlertProvider{}, tools.DemoLogProvider{}), llmClient) // Embed 为 nil → 走 BM25
@@ -109,27 +109,19 @@ func main() {
 		name string
 		run  func(context.Context, Case) domain.DiagnosisResult
 	}{
-		{"full", func(ctx context.Context, c Case) domain.DiagnosisResult {
-			return fullSvc.Diagnose(ctx, req(c))
-		}},
-		{"bm25", func(ctx context.Context, c Case) domain.DiagnosisResult {
-			return bm25Svc.Diagnose(ctx, req(c))
-		}},
-		{"no-agent", func(ctx context.Context, c Case) domain.DiagnosisResult {
-			return noAgent(ctx, llmClient, c)
-		}},
+		{"full", func(ctx context.Context, c Case) domain.DiagnosisResult { return fullSvc.Diagnose(ctx, req(c)) }},
+		{"bm25", func(ctx context.Context, c Case) domain.DiagnosisResult { return bm25Svc.Diagnose(ctx, req(c)) }},
+		{"no-agent", func(ctx context.Context, c Case) domain.DiagnosisResult { return noAgent(ctx, llmClient, c) }},
 	}
 
 	type agg struct {
-		n      int
-		hit    int
-		recall float64
-		riskOK int
-		conf   float64
-		ms     int64
+		n, hit, riskOK int
+		recall, conf   float64
+		ms             int64
+		faithN, halluc int
+		faith          float64
 	}
 	sums := map[string]*agg{}
-	detail := map[string][]result{}
 
 	for _, cfg := range configs {
 		sums[cfg.name] = &agg{}
@@ -139,9 +131,13 @@ func main() {
 			t0 := time.Now()
 			dr := cfg.run(ctx, c)
 			ms := time.Since(t0).Milliseconds()
-			cancel()
 			res := score(c, dr, ms)
-			detail[cfg.name] = append(detail[cfg.name], res)
+			if *judgeFlag {
+				if f, h, ok := judge(ctx, llmClient, c.Question, dr); ok {
+					res.faith, res.halluc, res.judged = f, h, true
+				}
+			}
+			cancel()
 			a := sums[cfg.name]
 			a.n++
 			if res.hitCause {
@@ -153,18 +149,24 @@ func main() {
 			}
 			a.conf += res.conf
 			a.ms += res.ms
-			fmt.Printf("  %-12s 根因=%v 证据召回=%.0f%% 高危标记正确=%v 置信=%.2f %dms\n",
-				c.ID, res.hitCause, res.recall*100, res.highRatOK, res.conf, res.ms)
+			if res.judged {
+				a.faithN++
+				a.faith += res.faith
+				if res.halluc {
+					a.halluc++
+				}
+			}
+			fmt.Printf("  %-12s 根因=%v 证据召回=%.0f%% 忠实=%.2f 幻觉=%v 置信=%.2f %dms\n",
+				c.ID, res.hitCause, res.recall*100, res.faith, res.halluc, res.conf, res.ms)
 		}
 	}
 
-	// 生成报告
 	var b strings.Builder
 	b.WriteString("# AIOps 诊断评测报告\n\n")
-	b.WriteString(fmt.Sprintf("案例数：%d ｜ 模型：%s ｜ 知识检索：%s\n\n", len(cases), llmClient.Model, knowledgeMode(index)))
+	b.WriteString(fmt.Sprintf("案例数：%d ｜ 模型：%s ｜ 知识检索：%s ｜ 判官：%s\n\n", len(cases), llmClient.Model, knowledgeMode(index), judgeLabel(*judgeFlag, llmClient.Model)))
 	b.WriteString("## 配置对照\n\n")
-	b.WriteString("| 配置 | 根因命中率 | 证据召回率 | 高危标记正确率 | 平均置信度 | 平均用时 |\n")
-	b.WriteString("|---|---|---|---|---|---|\n")
+	b.WriteString("| 配置 | 根因命中率 | 证据召回率 | 忠实度↑ | 幻觉率↓ | 高危标记正确率 | 平均置信度 | 平均用时 |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|\n")
 	order := []string{"full", "bm25", "no-agent"}
 	desc := map[string]string{"full": "Agent+工具+向量RAG", "bm25": "Agent+工具+仅BM25", "no-agent": "纯LLM无取证"}
 	for _, name := range order {
@@ -173,12 +175,17 @@ func main() {
 			continue
 		}
 		n := float64(a.n)
-		b.WriteString(fmt.Sprintf("| **%s**<br><sub>%s</sub> | %.0f%% | %.0f%% | %.0f%% | %.2f | %.1fs |\n",
-			name, desc[name],
-			float64(a.hit)/n*100, a.recall/n*100, float64(a.riskOK)/n*100, a.conf/n, float64(a.ms)/n/1000))
+		faithStr, hallStr := "—", "—"
+		if a.faithN > 0 {
+			faithStr = fmt.Sprintf("%.2f", a.faith/float64(a.faithN))
+			hallStr = fmt.Sprintf("%.0f%%", float64(a.halluc)/float64(a.faithN)*100)
+		}
+		b.WriteString(fmt.Sprintf("| **%s**<br><sub>%s</sub> | %.0f%% | %.0f%% | %s | %s | %.0f%% | %.2f | %.1fs |\n",
+			name, desc[name], float64(a.hit)/n*100, a.recall/n*100, faithStr, hallStr, float64(a.riskOK)/n*100, a.conf/n, float64(a.ms)/n/1000))
 	}
-	b.WriteString("\n> 指标说明：**根因命中率**=诊断结论/假设命中标准根因关键词的比例；**证据召回率**=应引用的证据来源被实际引用的比例；**高危标记正确率**=对高风险动作是否需审批的判断与期望一致的比例。\n")
-	b.WriteString("\n> 说明：当前基于内置多产品演示数据集，用于验证方法与产出初步数字；正式投稿前建议替换为更大/更真实的案例集。\n")
+	b.WriteString("\n> **忠实度**=诊断论断被所引证据支撑的比例（LLM 判官，0-1，越高越好）；**幻觉率**=存在无证据支撑断言的案例占比（越低越好）。\n")
+	b.WriteString("> **根因命中率**=结论/假设命中标准根因关键词的比例（关键词判定较宽松，仅作参考）；**证据召回率**=应引用证据来源被实际引用的比例。\n")
+	b.WriteString("> 判官与被测为同一模型，存在自评偏差，仅作相对参考；正式投稿建议用更强/独立判官 + 更大更真实的数据集。\n")
 
 	if err := os.WriteFile(*reportPath, []byte(b.String()), 0644); err != nil {
 		fmt.Println("写报告失败:", err)
@@ -209,6 +216,41 @@ func noAgent(ctx context.Context, c *llm.Client, cs Case) domain.DiagnosisResult
 		}
 	}
 	return dr
+}
+
+// judge 用 LLM 判官依据“已收集证据”评估诊断结论的忠实度与是否幻觉。
+func judge(ctx context.Context, c *llm.Client, question string, dr domain.DiagnosisResult) (float64, bool, bool) {
+	var ev strings.Builder
+	for i, e := range dr.Evidence {
+		ev.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, e.Title, e.Content))
+	}
+	if ev.Len() == 0 {
+		ev.WriteString("（无任何证据）")
+	}
+	var hyp strings.Builder
+	for _, h := range dr.Hypotheses {
+		hyp.WriteString("- " + h.Cause + "\n")
+	}
+	sys := "你是严格的运维诊断质检员。依据【可用证据】判断【诊断结论/根因假设】中的论断是否有据可依。以 json 只输出一个对象：{\"faithfulness\":0到1的小数（被证据支撑的关键论断比例）,\"has_hallucination\":true或false（是否存在无证据支撑却断言的内容）}。若可用证据为空而结论仍给出具体断言，视为幻觉、faithfulness 应很低。"
+	user := fmt.Sprintf("【用户问题】%s\n\n【可用证据】\n%s\n【诊断结论】%s\n【根因假设】\n%s", question, ev.String(), dr.Summary, hyp.String())
+	msg, err := c.Chat(ctx, []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}, nil, true)
+	if err != nil || msg == nil {
+		return 0, false, false
+	}
+	var v struct {
+		Faithfulness     float64 `json:"faithfulness"`
+		HasHallucination bool    `json:"has_hallucination"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(msg.Content)), &v) != nil {
+		return 0, false, false
+	}
+	if v.Faithfulness < 0 {
+		v.Faithfulness = 0
+	}
+	if v.Faithfulness > 1 {
+		v.Faithfulness = 1
+	}
+	return v.Faithfulness, v.HasHallucination, true
 }
 
 func score(c Case, dr domain.DiagnosisResult, ms int64) result {
@@ -243,7 +285,7 @@ func score(c Case, dr domain.DiagnosisResult, ms int64) result {
 			break
 		}
 	}
-	return result{hitCause: hit, recall: recall, highRisk: flagged, highRatOK: flagged == c.ExpectHighRisk, conf: dr.Confidence, ms: ms}
+	return result{hitCause: hit, recall: recall, highRatOK: flagged == c.ExpectHighRisk, conf: dr.Confidence, ms: ms}
 }
 
 func knowledgeMode(i *knowledge.Index) string {
@@ -251,6 +293,13 @@ func knowledgeMode(i *knowledge.Index) string {
 		return "BM25+向量(RRF)"
 	}
 	return "BM25"
+}
+
+func judgeLabel(on bool, model string) string {
+	if on {
+		return model + "(自评)"
+	}
+	return "关闭"
 }
 
 func env(k, def string) string {
