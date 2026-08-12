@@ -1,0 +1,82 @@
+[
+  {
+    "id": "payment-1",
+    "product": "payment",
+    "question": "分析支付服务最近30分钟的高错误率告警",
+    "expect_cause_any": ["上游", "inventory", "库存", "超时", "连接池", "依赖"],
+    "expect_evidence_source": ["payment-api", "payment-db"],
+    "expect_high_risk": true
+  },
+  {
+    "id": "payment-2",
+    "product": "payment",
+    "question": "支付接口P95响应时间变慢，帮我定位根因",
+    "expect_cause_any": ["上游", "inventory", "库存", "超时", "连接池", "依赖"],
+    "expect_evidence_source": ["payment-api", "payment-db"],
+    "expect_high_risk": true
+  },
+  {
+    "id": "inventory-1",
+    "product": "inventory",
+    "question": "inventory-03 实例存活异常，帮我排查",
+    "expect_cause_any": ["存活", "健康", "重启", "gc", "内存", "jvm", "old"],
+    "expect_evidence_source": ["inventory-jvm", "inventory-03"],
+    "expect_high_risk": true
+  },
+  {
+    "id": "inventory-2",
+    "product": "inventory",
+    "question": "库存服务 JVM 老年代使用率过高是什么原因",
+    "expect_cause_any": ["gc", "内存", "old", "full", "jvm", "回收"],
+    "expect_evidence_source": ["inventory-jvm"],
+    "expect_high_risk": true
+  },
+  {
+    "id": "order-1",
+    "product": "order",
+    "question": "订单创建超时率上升，什么原因",
+    "expect_cause_any": ["payment", "下游", "超时", "支付", "重试", "依赖"],
+    "expect_evidence_source": ["order-api"],
+    "expect_high_risk": false
+  },
+  {
+    "id": "order-2",
+    "product": "order",
+    "question": "订单消息队列消费积压严重，帮我分析",
+    "expect_cause_any": ["队列", "积压", "kafka", "lag", "消费", "rebalanc"],
+    "expect_evidence_source": ["order-mq"],
+    "expect_high_risk": false
+  },
+  {
+    "id": "gateway-1",
+    "product": "gateway",
+    "question": "网关出现大量 5xx，帮我分析原因",
+    "expect_cause_any": ["order", "上游", "502", "连接", "refused", "拒绝", "不可用"],
+    "expect_evidence_source": ["gateway"],
+    "expect_high_risk": false
+  },
+  {
+    "id": "gateway-2",
+    "product": "gateway",
+    "question": "gateway 上游连接被拒绝是什么问题",
+    "expect_cause_any": ["order", "上游", "连接", "refused", "拒绝", "502"],
+    "expect_evidence_source": ["gateway"],
+    "expect_high_risk": false
+  },
+  {
+    "id": "user-1",
+    "product": "user",
+    "question": "用户登录失败率升高，排查一下原因",
+    "expect_cause_any": ["redis", "会话", "session", "超时", "缓存", "auth"],
+    "expect_evidence_source": ["user-api"],
+    "expect_high_risk": false
+  },
+  {
+    "id": "user-2",
+    "product": "user",
+    "question": "最近登录经常失败是怎么回事",
+    "expect_cause_any": ["redis", "会话", "session", "超时", "缓存"],
+    "expect_evidence_source": ["user-api"],
+    "expect_high_risk": false
+  }
+]
