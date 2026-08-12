@@ -4,7 +4,7 @@
 //   full     —— Agent 工具循环 + 向量 RAG（BM25+向量 RRF）
 //   bm25     —— Agent 工具循环 + 仅 BM25 知识检索（关闭向量）
 //   no-agent —— 纯 LLM 单轮作答，不调用任何工具（无证据基线）
-// 指标：根因命中率、证据召回率、忠实度(LLM 判官)、幻觉率(LLM 判官)、高危标记正确率、平均置信度。
+// 指标：根因命中率、证据召回率、知识命中率、忠实度(LLM 判官)、幻觉率(LLM 判官)、平均置信度。
 package main
 
 import (
@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,18 +32,20 @@ type Case struct {
 	Question             string   `json:"question"`
 	ExpectCauseAny       []string `json:"expect_cause_any"`
 	ExpectEvidenceSource []string `json:"expect_evidence_source"`
+	ExpectKnowledge      string   `json:"expect_knowledge"`
 	ExpectHighRisk       bool     `json:"expect_high_risk"`
 }
 
 type result struct {
-	hitCause  bool
-	recall    float64
-	highRatOK bool
-	conf      float64
-	ms        int64
-	faith     float64
-	halluc    bool
-	judged    bool
+	hitCause bool
+	recall   float64
+	kbHit    bool
+	kbEval   bool
+	conf     float64
+	ms       int64
+	faith    float64
+	halluc   bool
+	judged   bool
 }
 
 func main() {
@@ -67,7 +70,11 @@ func main() {
 		cases = cases[:*limit]
 	}
 
-	index, err := knowledge.LoadMarkdown(env("KNOWLEDGE_PATH", "../README-原始需求.md"))
+	paths := []string{env("KNOWLEDGE_PATH", "../README-原始需求.md")}
+	if extra, _ := filepath.Glob(filepath.Join(env("KNOWLEDGE_DIR", "knowledge-base"), "*.md")); len(extra) > 0 {
+		paths = append(paths, extra...)
+	}
+	index, err := knowledge.LoadMarkdownFiles(paths)
 	if err != nil {
 		fmt.Println("知识库加载失败:", err)
 		os.Exit(1)
@@ -115,11 +122,11 @@ func main() {
 	}
 
 	type agg struct {
-		n, hit, riskOK int
-		recall, conf   float64
-		ms             int64
-		faithN, halluc int
-		faith          float64
+		n, hit, kbN, kb int
+		recall, conf    float64
+		ms              int64
+		faithN, halluc  int
+		faith           float64
 	}
 	sums := map[string]*agg{}
 
@@ -144,8 +151,11 @@ func main() {
 				a.hit++
 			}
 			a.recall += res.recall
-			if res.highRatOK {
-				a.riskOK++
+			if res.kbEval {
+				a.kbN++
+				if res.kbHit {
+					a.kb++
+				}
 			}
 			a.conf += res.conf
 			a.ms += res.ms
@@ -156,8 +166,8 @@ func main() {
 					a.halluc++
 				}
 			}
-			fmt.Printf("  %-12s 根因=%v 证据召回=%.0f%% 忠实=%.2f 幻觉=%v 置信=%.2f %dms\n",
-				c.ID, res.hitCause, res.recall*100, res.faith, res.halluc, res.conf, res.ms)
+			fmt.Printf("  %-12s 根因=%v 证据召回=%.0f%% 知识命中=%v 忠实=%.2f 幻觉=%v 置信=%.2f %dms\n",
+				c.ID, res.hitCause, res.recall*100, res.kbHit, res.faith, res.halluc, res.conf, res.ms)
 		}
 	}
 
@@ -165,7 +175,7 @@ func main() {
 	b.WriteString("# AIOps 诊断评测报告\n\n")
 	b.WriteString(fmt.Sprintf("案例数：%d ｜ 模型：%s ｜ 知识检索：%s ｜ 判官：%s\n\n", len(cases), llmClient.Model, knowledgeMode(index), judgeLabel(*judgeFlag, llmClient.Model)))
 	b.WriteString("## 配置对照\n\n")
-	b.WriteString("| 配置 | 根因命中率 | 证据召回率 | 忠实度↑ | 幻觉率↓ | 高危标记正确率 | 平均置信度 | 平均用时 |\n")
+	b.WriteString("| 配置 | 根因命中率 | 证据召回率 | 知识命中率 | 忠实度↑ | 幻觉率↓ | 平均置信度 | 平均用时 |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|\n")
 	order := []string{"full", "bm25", "no-agent"}
 	desc := map[string]string{"full": "Agent+工具+向量RAG", "bm25": "Agent+工具+仅BM25", "no-agent": "纯LLM无取证"}
@@ -175,16 +185,20 @@ func main() {
 			continue
 		}
 		n := float64(a.n)
-		faithStr, hallStr := "—", "—"
+		kbStr, faithStr, hallStr := "—", "—", "—"
+		if a.kbN > 0 {
+			kbStr = fmt.Sprintf("%.0f%%", float64(a.kb)/float64(a.kbN)*100)
+		}
 		if a.faithN > 0 {
 			faithStr = fmt.Sprintf("%.2f", a.faith/float64(a.faithN))
 			hallStr = fmt.Sprintf("%.0f%%", float64(a.halluc)/float64(a.faithN)*100)
 		}
-		b.WriteString(fmt.Sprintf("| **%s**<br><sub>%s</sub> | %.0f%% | %.0f%% | %s | %s | %.0f%% | %.2f | %.1fs |\n",
-			name, desc[name], float64(a.hit)/n*100, a.recall/n*100, faithStr, hallStr, float64(a.riskOK)/n*100, a.conf/n, float64(a.ms)/n/1000))
+		b.WriteString(fmt.Sprintf("| **%s**<br><sub>%s</sub> | %.0f%% | %.0f%% | %s | %s | %s | %.2f | %.1fs |\n",
+			name, desc[name], float64(a.hit)/n*100, a.recall/n*100, kbStr, faithStr, hallStr, a.conf/n, float64(a.ms)/n/1000))
 	}
-	b.WriteString("\n> **忠实度**=诊断论断被所引证据支撑的比例（LLM 判官，0-1，越高越好）；**幻觉率**=存在无证据支撑断言的案例占比（越低越好）。\n")
-	b.WriteString("> **根因命中率**=结论/假设命中标准根因关键词的比例（关键词判定较宽松，仅作参考）；**证据召回率**=应引用证据来源被实际引用的比例。\n")
+	b.WriteString("\n> **知识命中率**=诊断是否检索并引用了对应的历史故障复盘（考察向量 RAG 的语义召回，用于对比 full 与 bm25；故障复盘措辞与提问不同，偏向语义匹配）。\n")
+	b.WriteString("> **忠实度**=诊断论断被所引证据支撑的比例（LLM 判官，0-1，越高越好）；**幻觉率**=存在无证据支撑断言的案例占比（越低越好）。\n")
+	b.WriteString("> **根因命中率**=结论/假设命中标准根因关键词的比例（关键词判定较宽松，仅作参考）；**证据召回率**=应引用日志证据被实际引用的比例。\n")
 	b.WriteString("> 判官与被测为同一模型，存在自评偏差，仅作相对参考；正式投稿建议用更强/独立判官 + 更大更真实的数据集。\n")
 
 	if err := os.WriteFile(*reportPath, []byte(b.String()), 0644); err != nil {
@@ -278,14 +292,16 @@ func score(c Case, dr domain.DiagnosisResult, ms int64) result {
 	if len(c.ExpectEvidenceSource) > 0 {
 		recall = float64(found) / float64(len(c.ExpectEvidenceSource))
 	}
-	flagged := false
-	for _, a := range dr.Actions {
-		if strings.EqualFold(a.Risk, "high") && a.RequiresApproval {
-			flagged = true
-			break
+	kbHit, kbEval := false, c.ExpectKnowledge != ""
+	if kbEval {
+		for _, e := range dr.Evidence {
+			if strings.Contains(e.Source, c.ExpectKnowledge) {
+				kbHit = true
+				break
+			}
 		}
 	}
-	return result{hitCause: hit, recall: recall, highRatOK: flagged == c.ExpectHighRisk, conf: dr.Confidence, ms: ms}
+	return result{hitCause: hit, recall: recall, kbHit: kbHit, kbEval: kbEval, conf: dr.Confidence, ms: ms}
 }
 
 func knowledgeMode(i *knowledge.Index) string {

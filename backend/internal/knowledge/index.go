@@ -24,7 +24,41 @@ type Index struct {
 	vectors [][]float32 // 可选：与 chunks 一一对应的向量，用于向量/混合检索
 }
 
+// LoadMarkdown 从单个 Markdown 文件构建索引。
 func LoadMarkdown(path string) (*Index, error) {
+	return LoadMarkdownFiles([]string{path})
+}
+
+// LoadMarkdownFiles 从多个 Markdown 文件合并构建索引（按二级标题分块）。
+func LoadMarkdownFiles(paths []string) (*Index, error) {
+	chunks := make([]Chunk, 0)
+	for _, p := range paths {
+		cs, err := parseChunks(p)
+		if err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, cs...)
+	}
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("文档没有可索引内容")
+	}
+	idx := &Index{chunks: chunks, df: map[string]int{}}
+	total := 0
+	for _, c := range chunks {
+		total += len(c.Terms)
+		seen := map[string]bool{}
+		for _, t := range c.Terms {
+			if !seen[t] {
+				idx.df[t]++
+				seen[t] = true
+			}
+		}
+	}
+	idx.avgLen = float64(total) / float64(len(chunks))
+	return idx, nil
+}
+
+func parseChunks(path string) ([]Chunk, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -55,23 +89,7 @@ func LoadMarkdown(path string) (*Index, error) {
 	if err := s.Err(); err != nil {
 		return nil, err
 	}
-	if len(chunks) == 0 {
-		return nil, fmt.Errorf("文档没有可索引内容")
-	}
-	idx := &Index{chunks: chunks, df: map[string]int{}}
-	total := 0
-	for _, c := range chunks {
-		total += len(c.Terms)
-		seen := map[string]bool{}
-		for _, t := range c.Terms {
-			if !seen[t] {
-				idx.df[t]++
-				seen[t] = true
-			}
-		}
-	}
-	idx.avgLen = float64(total) / float64(len(chunks))
-	return idx, nil
+	return chunks, nil
 }
 
 func (i *Index) Size() int {

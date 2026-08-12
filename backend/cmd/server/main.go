@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,12 +20,15 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	path := env("KNOWLEDGE_PATH", "../README-原始需求.md")
-	index, err := knowledge.LoadMarkdown(path)
+	paths := []string{env("KNOWLEDGE_PATH", "../README-原始需求.md")}
+	if extra, _ := filepath.Glob(filepath.Join(env("KNOWLEDGE_DIR", "knowledge-base"), "*.md")); len(extra) > 0 {
+		paths = append(paths, extra...)
+	}
+	index, err := knowledge.LoadMarkdownFiles(paths)
 	if err != nil {
 		log.Printf("知识库加载失败，继续以空索引启动: %v", err)
 	} else {
-		log.Printf("知识库已加载: %d 个分块", index.Size())
+		log.Printf("知识库已加载: %d 个分块（来自 %d 个文件）", index.Size(), len(paths))
 	}
 	repo := storage.Repository(storage.NewMemory())
 	storageMode := "memory"
