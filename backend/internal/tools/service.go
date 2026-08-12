@@ -9,6 +9,8 @@ type Service struct {
 	Knowledge      *knowledge.Index
 	AlertsProvider AlertProvider
 	LogsProvider   LogProvider
+	// Embed 可选：把查询向量化，用于知识库混合检索。未设置时退回 BM25。
+	Embed func(string) ([]float32, error)
 }
 
 func NewService(k *knowledge.Index, alerts AlertProvider, logs LogProvider) *Service {
@@ -36,7 +38,19 @@ func (s *Service) SearchKnowledge(q string, limit int) []domain.Evidence {
 	if s.Knowledge == nil {
 		return []domain.Evidence{}
 	}
-	return s.Knowledge.Search(q, limit)
+	var qvec []float32
+	if s.Embed != nil && s.Knowledge.HasVectors() {
+		if v, err := s.Embed(q); err == nil {
+			qvec = v
+		}
+	}
+	return s.Knowledge.SearchHybrid(q, qvec, limit)
+}
+func (s *Service) KnowledgeMode() string {
+	if s.Knowledge != nil && s.Knowledge.HasVectors() {
+		return "bm25+vector(RRF)"
+	}
+	return "markdown-bm25"
 }
 func (s *Service) AlertProviderName() string {
 	if s.AlertsProvider == nil {

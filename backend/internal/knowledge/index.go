@@ -18,9 +18,10 @@ type Chunk struct {
 	Terms                  []string
 }
 type Index struct {
-	chunks []Chunk
-	df     map[string]int
-	avgLen float64
+	chunks  []Chunk
+	df      map[string]int
+	avgLen  float64
+	vectors [][]float32 // 可选：与 chunks 一一对应的向量，用于向量/混合检索
 }
 
 func LoadMarkdown(path string) (*Index, error) {
@@ -79,23 +80,23 @@ func (i *Index) Size() int {
 	}
 	return len(i.chunks)
 }
-func (i *Index) Search(query string, limit int) []domain.Evidence {
-	if i == nil || limit <= 0 {
-		return []domain.Evidence{}
-	}
+
+type ranked struct {
+	idx   int
+	score float64
+}
+
+// bm25 返回按 BM25 得分降序排列的分块下标（仅保留 score>0）。
+func (i *Index) bm25(query string) []ranked {
 	q := tokenize(query)
 	if len(q) == 0 {
-		return []domain.Evidence{}
+		return nil
 	}
-	type hit struct {
-		c     Chunk
-		score float64
-	}
-	hits := make([]hit, 0)
 	n := float64(len(i.chunks))
 	const k1 = 1.5
 	const b = .75
-	for _, c := range i.chunks {
+	out := make([]ranked, 0)
+	for ci, c := range i.chunks {
 		tf := map[string]int{}
 		for _, t := range c.Terms {
 			tf[t]++
@@ -111,24 +112,110 @@ func (i *Index) Search(query string, limit int) []domain.Evidence {
 			score += idf * (f * (k1 + 1)) / (f + k1*(1-b+b*float64(len(c.Terms))/i.avgLen))
 		}
 		if score > 0 {
-			hits = append(hits, hit{c, score})
+			out = append(out, ranked{ci, score})
 		}
 	}
-	sort.Slice(hits, func(a, b int) bool { return hits[a].score > hits[b].score })
-	if len(hits) > limit {
-		hits = hits[:limit]
+	sort.Slice(out, func(a, b int) bool { return out[a].score > out[b].score })
+	return out
+}
+
+func (i *Index) vectorRank(qvec []float32) []ranked {
+	out := make([]ranked, 0, len(i.vectors))
+	for ci, v := range i.vectors {
+		out = append(out, ranked{ci, cosine(qvec, v)})
 	}
-	out := make([]domain.Evidence, 0, len(hits))
+	sort.Slice(out, func(a, b int) bool { return out[a].score > out[b].score })
+	return out
+}
+
+func cosine(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, na, nb float64
+	for k := range a {
+		dot += float64(a[k]) * float64(b[k])
+		na += float64(a[k]) * float64(a[k])
+		nb += float64(b[k]) * float64(b[k])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+}
+
+// SetVectors 注入与分块一一对应的向量。数量不匹配则忽略（保持 BM25 模式）。
+func (i *Index) SetVectors(v [][]float32) {
+	if i != nil && len(v) == len(i.chunks) && len(i.chunks) > 0 {
+		i.vectors = v
+	}
+}
+
+func (i *Index) HasVectors() bool {
+	return i != nil && len(i.vectors) == len(i.chunks) && len(i.chunks) > 0
+}
+
+// ChunkTexts 返回每个分块用于生成向量的文本（标题 + 正文）。
+func (i *Index) ChunkTexts() []string {
+	if i == nil {
+		return nil
+	}
+	out := make([]string, len(i.chunks))
+	for j, c := range i.chunks {
+		out[j] = c.Title + " " + c.Content
+	}
+	return out
+}
+
+// Search 关键词（BM25）检索。
+func (i *Index) Search(query string, limit int) []domain.Evidence {
+	if i == nil || limit <= 0 {
+		return []domain.Evidence{}
+	}
+	return i.toEvidence(i.bm25(query), limit)
+}
+
+// SearchHybrid 有查询向量且已注入分块向量时，用 BM25 + 向量双路检索并按 RRF(k=60) 融合；
+// 否则退回纯 BM25。这样未配置嵌入模型时行为与之前一致。
+func (i *Index) SearchHybrid(query string, qvec []float32, limit int) []domain.Evidence {
+	if i == nil || limit <= 0 {
+		return []domain.Evidence{}
+	}
+	if qvec == nil || !i.HasVectors() {
+		return i.toEvidence(i.bm25(query), limit)
+	}
+	const k = 60.0
+	rrf := map[int]float64{}
+	for rank, r := range i.bm25(query) {
+		rrf[r.idx] += 1.0 / (k + float64(rank+1))
+	}
+	for rank, r := range i.vectorRank(qvec) {
+		rrf[r.idx] += 1.0 / (k + float64(rank+1))
+	}
+	fused := make([]ranked, 0, len(rrf))
+	for idx, s := range rrf {
+		fused = append(fused, ranked{idx, s})
+	}
+	sort.Slice(fused, func(a, b int) bool { return fused[a].score > fused[b].score })
+	return i.toEvidence(fused, limit)
+}
+
+func (i *Index) toEvidence(rs []ranked, limit int) []domain.Evidence {
+	if limit > 0 && len(rs) > limit {
+		rs = rs[:limit]
+	}
 	max := 0.0
-	if len(hits) > 0 {
-		max = hits[0].score
+	if len(rs) > 0 {
+		max = rs[0].score
 	}
-	for _, h := range hits {
-		score := h.score
+	out := make([]domain.Evidence, 0, len(rs))
+	for _, r := range rs {
+		score := r.score
 		if max > 0 {
 			score /= max
 		}
-		out = append(out, domain.Evidence{Type: "knowledge", Title: h.c.Title, Content: truncate(h.c.Content, 700), Score: score, Source: h.c.Source})
+		c := i.chunks[r.idx]
+		out = append(out, domain.Evidence{Type: "knowledge", Title: c.Title, Content: truncate(c.Content, 700), Score: score, Source: c.Source})
 	}
 	return out
 }

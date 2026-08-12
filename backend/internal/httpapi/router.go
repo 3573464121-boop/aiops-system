@@ -28,10 +28,10 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 	})
 	api := r.Group("/api/v1")
 	api.GET("/system/status", func(c *gin.Context) {
-		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": "markdown-bm25", "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
+		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
 	})
 	api.GET("/tools", func(c *gin.Context) {
-		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": "markdown-bm25", "readonly": true}}})
+		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": s.Tools.KnowledgeMode(), "readonly": true}}})
 	})
 	api.GET("/alerts/active", func(c *gin.Context) {
 		v, err := s.Tools.Alerts(strings.TrimSpace(c.Query("product_id")))
@@ -65,7 +65,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 			limit = 5
 		}
 		v := s.Tools.SearchKnowledge(q, limit)
-		c.JSON(200, gin.H{"items": v, "total": len(v), "mode": "markdown-bm25"})
+		c.JSON(200, gin.H{"items": v, "total": len(v), "mode": s.Tools.KnowledgeMode()})
 	})
 	api.POST("/diagnoses", func(c *gin.Context) {
 		var req domain.DiagnosisRequest

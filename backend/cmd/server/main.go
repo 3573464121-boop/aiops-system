@@ -5,8 +5,10 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"aiops-mvp/internal/app"
+	"aiops-mvp/internal/embed"
 	"aiops-mvp/internal/httpapi"
 	"aiops-mvp/internal/knowledge"
 	"aiops-mvp/internal/llm"
@@ -50,6 +52,31 @@ func main() {
 		log.Printf("日志数据源: demo（未配置 LOG_BASE_URL）")
 	}
 	toolService := tools.NewService(index, alertProvider, logProvider)
+
+	// 可选：为知识库构建向量索引（BM25 + 向量 RRF 混合检索）。未配置或构建失败则退回 BM25。
+	embedder := &embed.Client{BaseURL: os.Getenv("EMBED_BASE_URL"), APIKey: os.Getenv("EMBED_API_KEY"), Model: os.Getenv("EMBED_MODEL")}
+	if embedder.Enabled() && index != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		if vecs, e := embedder.Embed(ctx, index.ChunkTexts()); e != nil {
+			log.Printf("向量索引构建失败，知识库仅用 BM25: %v", e)
+		} else {
+			index.SetVectors(vecs)
+			toolService.Embed = func(q string) ([]float32, error) {
+				c2, c2cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer c2cancel()
+				vs, err2 := embedder.Embed(c2, []string{q})
+				if err2 != nil || len(vs) == 0 {
+					return nil, err2
+				}
+				return vs[0], nil
+			}
+			log.Printf("向量索引已构建: %d 个分块 (embed=%s)", index.Size(), embedder.Model)
+		}
+		cancel()
+	} else {
+		log.Printf("知识检索: 仅 BM25（未配置 EMBED_BASE_URL）")
+	}
+
 	llmClient := &llm.Client{BaseURL: os.Getenv("LLM_BASE_URL"), APIKey: os.Getenv("LLM_API_KEY"), Model: os.Getenv("LLM_MODEL")}
 	service := app.New(toolService, llmClient, repo)
 	router := httpapi.New(service, indexSize(index), storageMode)
