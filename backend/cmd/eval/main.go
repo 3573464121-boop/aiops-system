@@ -4,7 +4,7 @@
 //   full     —— Agent 工具循环 + 向量 RAG（BM25+向量 RRF）
 //   bm25     —— Agent 工具循环 + 仅 BM25 知识检索（关闭向量）
 //   no-agent —— 纯 LLM 单轮作答，不调用任何工具（无证据基线）
-// 指标：根因命中率、证据召回率、知识命中率、忠实度(LLM 判官)、幻觉率(LLM 判官)、平均置信度。
+// 指标：根因准确率(LLM 判官)、证据召回率、知识命中率、忠实度(LLM 判官)、幻觉率(LLM 判官)、平均置信度。
 package main
 
 import (
@@ -30,6 +30,7 @@ type Case struct {
 	ID                   string   `json:"id"`
 	Product              string   `json:"product"`
 	Question             string   `json:"question"`
+	GoldCause            string   `json:"gold_cause"`
 	ExpectCauseAny       []string `json:"expect_cause_any"`
 	ExpectEvidenceSource []string `json:"expect_evidence_source"`
 	ExpectKnowledge      string   `json:"expect_knowledge"`
@@ -37,15 +38,15 @@ type Case struct {
 }
 
 type result struct {
-	hitCause bool
-	recall   float64
-	kbHit    bool
-	kbEval   bool
-	conf     float64
-	ms       int64
-	faith    float64
-	halluc   bool
-	judged   bool
+	causeOK bool
+	recall  float64
+	kbHit   bool
+	kbEval  bool
+	conf    float64
+	ms      int64
+	faith   float64
+	halluc  bool
+	judged  bool
 }
 
 func main() {
@@ -53,7 +54,7 @@ func main() {
 	datasetPath := flag.String("dataset", "eval/dataset.json", "评测数据集路径")
 	reportPath := flag.String("report", "eval/report.md", "报告输出路径")
 	limit := flag.Int("limit", 0, "只跑前 N 个案例（0=全部）")
-	judgeFlag := flag.Bool("judge", true, "用 LLM 判官评估忠实度/幻觉率")
+	judgeFlag := flag.Bool("judge", true, "用 LLM 判官评估根因准确率/忠实度/幻觉率")
 	flag.Parse()
 
 	raw, err := os.ReadFile(*datasetPath)
@@ -122,11 +123,12 @@ func main() {
 	}
 
 	type agg struct {
-		n, hit, kbN, kb int
-		recall, conf    float64
-		ms              int64
-		faithN, halluc  int
-		faith           float64
+		n, kbN, kb     int
+		recall, conf   float64
+		ms             int64
+		faithN, halluc int
+		causeOK        int
+		faith          float64
 	}
 	sums := map[string]*agg{}
 
@@ -140,16 +142,13 @@ func main() {
 			ms := time.Since(t0).Milliseconds()
 			res := score(c, dr, ms)
 			if *judgeFlag {
-				if f, h, ok := judge(ctx, llmClient, c.Question, dr); ok {
-					res.faith, res.halluc, res.judged = f, h, true
+				if f, h, cc, ok := judge(ctx, llmClient, c.Question, c.GoldCause, dr); ok {
+					res.faith, res.halluc, res.causeOK, res.judged = f, h, cc, true
 				}
 			}
 			cancel()
 			a := sums[cfg.name]
 			a.n++
-			if res.hitCause {
-				a.hit++
-			}
 			a.recall += res.recall
 			if res.kbEval {
 				a.kbN++
@@ -165,9 +164,12 @@ func main() {
 				if res.halluc {
 					a.halluc++
 				}
+				if res.causeOK {
+					a.causeOK++
+				}
 			}
-			fmt.Printf("  %-12s 根因=%v 证据召回=%.0f%% 知识命中=%v 忠实=%.2f 幻觉=%v 置信=%.2f %dms\n",
-				c.ID, res.hitCause, res.recall*100, res.kbHit, res.faith, res.halluc, res.conf, res.ms)
+			fmt.Printf("  %-12s 根因正确=%v 证据召回=%.0f%% 知识命中=%v 忠实=%.2f 幻觉=%v 置信=%.2f %dms\n",
+				c.ID, res.causeOK, res.recall*100, res.kbHit, res.faith, res.halluc, res.conf, res.ms)
 		}
 	}
 
@@ -175,7 +177,7 @@ func main() {
 	b.WriteString("# AIOps 诊断评测报告\n\n")
 	b.WriteString(fmt.Sprintf("案例数：%d ｜ 模型：%s ｜ 知识检索：%s ｜ 判官：%s\n\n", len(cases), llmClient.Model, knowledgeMode(index), judgeLabel(*judgeFlag, llmClient.Model)))
 	b.WriteString("## 配置对照\n\n")
-	b.WriteString("| 配置 | 根因命中率 | 证据召回率 | 知识命中率 | 忠实度↑ | 幻觉率↓ | 平均置信度 | 平均用时 |\n")
+	b.WriteString("| 配置 | 根因准确率 | 证据召回率 | 知识命中率 | 忠实度↑ | 幻觉率↓ | 平均置信度 | 平均用时 |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|\n")
 	order := []string{"full", "bm25", "no-agent"}
 	desc := map[string]string{"full": "Agent+工具+向量RAG", "bm25": "Agent+工具+仅BM25", "no-agent": "纯LLM无取证"}
@@ -185,20 +187,21 @@ func main() {
 			continue
 		}
 		n := float64(a.n)
-		kbStr, faithStr, hallStr := "—", "—", "—"
+		kbStr, faithStr, hallStr, causeStr := "—", "—", "—", "—"
 		if a.kbN > 0 {
 			kbStr = fmt.Sprintf("%.0f%%", float64(a.kb)/float64(a.kbN)*100)
 		}
 		if a.faithN > 0 {
 			faithStr = fmt.Sprintf("%.2f", a.faith/float64(a.faithN))
 			hallStr = fmt.Sprintf("%.0f%%", float64(a.halluc)/float64(a.faithN)*100)
+			causeStr = fmt.Sprintf("%.0f%%", float64(a.causeOK)/float64(a.faithN)*100)
 		}
-		b.WriteString(fmt.Sprintf("| **%s**<br><sub>%s</sub> | %.0f%% | %.0f%% | %s | %s | %s | %.2f | %.1fs |\n",
-			name, desc[name], float64(a.hit)/n*100, a.recall/n*100, kbStr, faithStr, hallStr, a.conf/n, float64(a.ms)/n/1000))
+		b.WriteString(fmt.Sprintf("| **%s**<br><sub>%s</sub> | %s | %.0f%% | %s | %s | %s | %.2f | %.1fs |\n",
+			name, desc[name], causeStr, a.recall/n*100, kbStr, faithStr, hallStr, a.conf/n, float64(a.ms)/n/1000))
 	}
-	b.WriteString("\n> **知识命中率**=诊断是否检索并引用了对应的历史故障复盘（考察向量 RAG 的语义召回，用于对比 full 与 bm25；故障复盘措辞与提问不同，偏向语义匹配）。\n")
-	b.WriteString("> **忠实度**=诊断论断被所引证据支撑的比例（LLM 判官，0-1，越高越好）；**幻觉率**=存在无证据支撑断言的案例占比（越低越好）。\n")
-	b.WriteString("> **根因命中率**=结论/假设命中标准根因关键词的比例（关键词判定较宽松，仅作参考）；**证据召回率**=应引用日志证据被实际引用的比例。\n")
+	b.WriteString("\n> **根因准确率**=LLM 判官严格判定诊断是否识别出标准根因（核心机理一致才算对）。\n")
+	b.WriteString("> **知识命中率**=诊断是否检索并引用了对应的历史故障复盘（考察向量 RAG 语义召回，用于对比 full 与 bm25）。\n")
+	b.WriteString("> **忠实度**=诊断论断被所引证据支撑的比例（判官，0-1，越高越好）；**幻觉率**=存在无证据支撑断言的案例占比（越低越好）；**证据召回率**=应引用日志证据被实际引用的比例。\n")
 	b.WriteString("> 判官与被测为同一模型，存在自评偏差，仅作相对参考；正式投稿建议用更强/独立判官 + 更大更真实的数据集。\n")
 
 	if err := os.WriteFile(*reportPath, []byte(b.String()), 0644); err != nil {
@@ -232,8 +235,8 @@ func noAgent(ctx context.Context, c *llm.Client, cs Case) domain.DiagnosisResult
 	return dr
 }
 
-// judge 用 LLM 判官依据“已收集证据”评估诊断结论的忠实度与是否幻觉。
-func judge(ctx context.Context, c *llm.Client, question string, dr domain.DiagnosisResult) (float64, bool, bool) {
+// judge 用 LLM 判官依据"已收集证据"与"标准根因"评估：忠实度、是否幻觉、根因是否正确。
+func judge(ctx context.Context, c *llm.Client, question, goldCause string, dr domain.DiagnosisResult) (float64, bool, bool, bool) {
 	var ev strings.Builder
 	for i, e := range dr.Evidence {
 		ev.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, e.Title, e.Content))
@@ -245,18 +248,19 @@ func judge(ctx context.Context, c *llm.Client, question string, dr domain.Diagno
 	for _, h := range dr.Hypotheses {
 		hyp.WriteString("- " + h.Cause + "\n")
 	}
-	sys := "你是严格的运维诊断质检员。依据【可用证据】判断【诊断结论/根因假设】中的论断是否有据可依。以 json 只输出一个对象：{\"faithfulness\":0到1的小数（被证据支撑的关键论断比例）,\"has_hallucination\":true或false（是否存在无证据支撑却断言的内容）}。若可用证据为空而结论仍给出具体断言，视为幻觉、faithfulness 应很低。"
-	user := fmt.Sprintf("【用户问题】%s\n\n【可用证据】\n%s\n【诊断结论】%s\n【根因假设】\n%s", question, ev.String(), dr.Summary, hyp.String())
+	sys := "你是严格的运维诊断评审。依据【可用证据】与【标准根因】评估【诊断结论/根因假设】。以 json 只输出一个对象：{\"faithfulness\":0到1的小数（结论被可用证据支撑的比例）,\"has_hallucination\":true或false（是否存在无证据支撑却断言的内容）,\"cause_correct\":true或false（是否正确识别出标准根因，核心机理一致才算对，方向对但关键机理缺失或搞错算错）}。若可用证据为空却给出具体断言，faithfulness 应很低、has_hallucination=true。"
+	user := fmt.Sprintf("【用户问题】%s\n\n【标准根因】%s\n\n【可用证据】\n%s\n【诊断结论】%s\n【根因假设】\n%s", question, goldCause, ev.String(), dr.Summary, hyp.String())
 	msg, err := c.Chat(ctx, []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}, nil, true)
 	if err != nil || msg == nil {
-		return 0, false, false
+		return 0, false, false, false
 	}
 	var v struct {
 		Faithfulness     float64 `json:"faithfulness"`
 		HasHallucination bool    `json:"has_hallucination"`
+		CauseCorrect     bool    `json:"cause_correct"`
 	}
 	if json.Unmarshal([]byte(strings.TrimSpace(msg.Content)), &v) != nil {
-		return 0, false, false
+		return 0, false, false, false
 	}
 	if v.Faithfulness < 0 {
 		v.Faithfulness = 0
@@ -264,21 +268,10 @@ func judge(ctx context.Context, c *llm.Client, question string, dr domain.Diagno
 	if v.Faithfulness > 1 {
 		v.Faithfulness = 1
 	}
-	return v.Faithfulness, v.HasHallucination, true
+	return v.Faithfulness, v.HasHallucination, v.CauseCorrect, true
 }
 
 func score(c Case, dr domain.DiagnosisResult, ms int64) result {
-	text := strings.ToLower(dr.Summary)
-	for _, h := range dr.Hypotheses {
-		text += " " + strings.ToLower(h.Cause)
-	}
-	hit := false
-	for _, kw := range c.ExpectCauseAny {
-		if kw != "" && strings.Contains(text, strings.ToLower(kw)) {
-			hit = true
-			break
-		}
-	}
 	found := 0
 	for _, src := range c.ExpectEvidenceSource {
 		for _, e := range dr.Evidence {
@@ -301,7 +294,7 @@ func score(c Case, dr domain.DiagnosisResult, ms int64) result {
 			}
 		}
 	}
-	return result{hitCause: hit, recall: recall, kbHit: kbHit, kbEval: kbEval, conf: dr.Confidence, ms: ms}
+	return result{recall: recall, kbHit: kbHit, kbEval: kbEval, conf: dr.Confidence, ms: ms}
 }
 
 func knowledgeMode(i *knowledge.Index) string {

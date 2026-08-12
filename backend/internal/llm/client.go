@@ -80,29 +80,55 @@ func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool, jso
 		payload["response_format"] = map[string]string{"type": "json_object"}
 	}
 	raw, _ := json.Marshal(payload)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
+	url := strings.TrimRight(c.BaseURL, "/") + "/chat/completions"
+
+	// 遇到限流(429)/服务端错误(5xx)/网络错误时，指数退避重试（1→2→4s，最多 4 次）。
+	var data []byte
+	var lastErr error
+	backoff := time.Second
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if c.APIKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		}
+		resp, err := c.httpClient().Do(httpReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, truncate(string(body), 300))
+		}
+		data, lastErr = body, nil
+		break
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-	resp, err := c.httpClient().Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, truncate(string(data), 300))
+	if lastErr != nil {
+		return nil, lastErr
 	}
 	var completion struct {
 		Choices []struct {
 			Message Message `json:"message"`
 		} `json:"choices"`
 	}
-	if err = json.Unmarshal(data, &completion); err != nil {
+	if err := json.Unmarshal(data, &completion); err != nil {
 		return nil, err
 	}
 	if len(completion.Choices) == 0 {
