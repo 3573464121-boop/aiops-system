@@ -1,0 +1,7 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  color: #1f2733;
+}
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; }
+body { min-width: 360px; background: #f0f2f5; }

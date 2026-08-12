@@ -1,0 +1,26 @@
+# 环境变量与密钥（含 DeepSeek API Key）—— 绝不提交
+.env
+backend/.env
+
+# Go 编译产物
+*.exe
+*.test
+*.out
+
+# 日志与调试快照
+*.log
+go-list.json
+go-list.err
+go-env.json
+smoke.log
+
+# 前端依赖与构建产物
+node_modules/
+dist/
+.vite/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
