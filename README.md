@@ -1,68 +1,68 @@
-# 智能运维（AIOps）诊断助手
+# 智能运维诊断助手（AIOps）
 
-面向告警 / 故障，由一个**只读、有证据、可审计**的 AI Agent 自主调用工具收集证据（告警 / 日志 / 知识库），**流式**产出带根因假设、处置建议（含风险分级与审批）、证据链的结构化诊断，并可一键沉淀为工单。
+一个基于大语言模型的运维故障诊断系统。给定一条告警或故障描述，系统会自主调用一组只读工具（查询告警、检索日志、检索知识库）收集证据，再由模型综合出带根因分析、处置建议和证据链的结构化诊断，推理过程可流式展示，诊断结果可一键沉淀为工单。
 
-> 设计原则：**先做到「有证据地辅助判断」，再谈「自动处置」。**
+设计上坚持一个原则：先给出有证据支撑的辅助判断，再谈自动处置。因此所有工具都是只读的，回滚、重启、扩容等高风险操作只会被标记为“需人工审批”，不会自动执行。
 
----
+## 功能
 
-## ✨ 核心特性
+- 工具调用循环。模型自主决定调用哪些工具、最多五轮，逐步取证，全过程记录调用轨迹。
+- 流式诊断。通过 SSE 把每一步工具调用与结果实时推送到前端，而不是等待整段结果返回。
+- 知识检索。Markdown 文档按标题分块，BM25 关键词检索与向量检索（bge-m3）经 RRF 融合，回答附带引用来源。
+- 可插拔数据源。告警与日志通过 Provider 接口接入，内置夜莺（Nightingale）与 Loki 适配器，未配置时使用内置演示数据；可扩展 Elasticsearch、ClickHouse 等。
+- 可审计。工具调用轨迹、证据来源、操作审计日志齐全；高风险动作强制标记需审批。
+- 多模型。OpenAI 兼容接口，默认对接 DeepSeek，也可切换到本机 Ollama。
+- 控制台。Vue 3 + Ant Design，包含仪表盘、运维助手对话、告警、知识库、工单、审计等页面。
+- 持久化。工单与审计写入 MySQL，不可用时自动回退内存。
 
-- **真正的 LLM Agent 工具调用循环** —— 模型自主决定调用哪些工具、最多 5 轮取证，全程记录调用轨迹（非固定流程 / 非套壳问答）
-- **流式诊断（SSE）** —— 推理过程（每一步工具调用与结果）实时推送到前端
-- **RAG 知识检索** —— Markdown 自动分块 + BM25，回答携带引用来源（向量 + RRF 规划中）
-- **可插拔数据源** —— `Provider` 接口隔离；内置 **夜莺(Nightingale) 告警适配器**与 **Loki 日志适配器**，通过环境变量即插即用，未配置时使用内置演示数据；可无缝扩展 Elasticsearch / ClickHouse
-- **可审计 & 安全** —— 只读工具、工具调用轨迹、证据溯源、**高风险动作强制「需审批」**、操作审计日志
-- **多模型** —— OpenAI 兼容接口，默认 **DeepSeek**，可切本机 Ollama
-- **控制台** —— Vue 3 + Ant Design 多页界面：仪表盘 / 运维助手对话 / 告警管理 / 知识库 / 问题工单 / 审计日志
-- **持久化** —— 工单与审计写入 MySQL，不可用时自动降级内存
-- **测试** —— 覆盖 Agent 工具循环、流式事件、适配器映射、知识检索、HTTP 接口
-
-## 🏗️ 架构
+## 架构
 
 ```
-用户提问 ──► 运维助手对话页(Vue3+Antd, SSE)
-                     │
-                     ▼
-         Agent 工具调用循环 (Go)  ──► get_alerts / search_logs / search_knowledge
-                     │  (≤5 轮，模型自主编排、逐步取证、全程审计)
-                     ▼
-         LLM (DeepSeek, OpenAI 兼容) 基于证据产出结构化诊断
-                     │
-                     ▼
-   根因假设 · 处置建议(风险分级/审批) · 证据链 · 一键工单(MySQL)
+运维助手对话页 (Vue 3 + Ant Design, SSE)
+        │
+        ▼
+Agent 工具调用循环 (Go)  →  get_alerts / search_logs / search_knowledge
+        │  最多 5 轮，模型自主编排、逐步取证、记录轨迹
+        ▼
+LLM (OpenAI 兼容) 基于收集到的证据产出结构化诊断
+        │
+        ▼
+根因分析 · 处置建议(含风险分级/审批) · 证据链 · 一键工单 (MySQL)
 ```
 
 ```
 backend/
-├─ cmd/server/main.go          # 启动、按 env 选择数据源与存储
-└─ internal/
-   ├─ app/        # 诊断编排：Agent 工具循环 / 流式 / 工单 / 审计
-   ├─ domain/     # 领域模型
-   ├─ httpapi/    # Gin 路由（含 SSE 流式接口）
-   ├─ knowledge/  # Markdown 分块 + BM25
-   ├─ llm/        # OpenAI 兼容客户端（Chat + 工具调用 + 强制 JSON）
-   ├─ storage/    # Repository：内存 / MySQL
-   └─ tools/      # Provider 接口、夜莺/Loki 适配器、演示数据
+  cmd/server/        服务入口，按环境变量选择数据源与存储
+  cmd/eval/          诊断质量评测程序
+  internal/
+    app/             诊断编排：工具循环、流式、工单、审计
+    domain/          领域模型
+    httpapi/         HTTP 路由（含 SSE 流式接口）
+    knowledge/       Markdown 分块、BM25、向量检索、RRF
+    llm/             OpenAI 兼容客户端（工具调用、限流退避重试）
+    embed/           文本向量化客户端
+    storage/         Repository：内存 / MySQL
+    tools/           Provider 接口、夜莺/Loki 适配器、演示数据
+  knowledge-base/    历史故障复盘与运维手册
 frontend/
-└─ src/{App.vue(导航), router.js, api.js, views/*}
+  src/               App.vue（导航）、router、api、views/
 ```
 
-## 🧰 技术栈
+## 技术栈
 
-后端 **Go + Gin** ｜ 前端 **Vue 3 + Ant Design Vue + Vite** ｜ LLM **OpenAI 兼容（DeepSeek / Ollama）** ｜ 存储 **MySQL** ｜ 检索 **BM25（内存）** ｜ 流式 **SSE**
+后端 Go + Gin，前端 Vue 3 + Ant Design Vue + Vite，模型走 OpenAI 兼容接口（DeepSeek 或 Ollama），向量检索用 bge-m3，持久化用 MySQL。
 
-## 🚀 快速开始
+## 运行
 
-### 后端
+后端：
 
 ```bash
 cd backend
-cp .env.example .env      # 填入你自己的 DeepSeek API Key（见下）
+cp .env.example .env      # 按需填写，见下方“配置”
 go run ./cmd/server        # 默认 http://localhost:8080
 ```
 
-### 前端
+前端：
 
 ```bash
 cd frontend
@@ -70,18 +70,35 @@ npm install
 npm run dev                # 默认 http://localhost:5173
 ```
 
-### 配置（`backend/.env`）
+## 配置
+
+编辑 `backend/.env`，各项均可留空（留空时走内置演示数据或内存存储）。
 
 | 变量 | 说明 |
 |---|---|
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 大模型。DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`（需到 platform.deepseek.com 自备 key） |
-| `N9E_BASE_URL` / `N9E_TOKEN` | 夜莺告警源。留空 = 演示数据 |
-| `LOG_BASE_URL` / `LOG_TOKEN` | Loki 日志源。留空 = 演示数据 |
-| `MYSQL_DSN` | 工单/审计持久化。留空 = 内存 |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 诊断模型。DeepSeek 为 `https://api.deepseek.com/v1` + `deepseek-chat`，需自备 API Key |
+| `EMBED_BASE_URL` / `EMBED_MODEL` | 向量检索嵌入模型，例如本机 Ollama 的 `bge-m3`；留空则只用 BM25 |
+| `N9E_BASE_URL` / `N9E_TOKEN` | 夜莺告警源，留空用演示数据 |
+| `LOG_BASE_URL` / `LOG_TOKEN` | Loki 日志源，留空用演示数据 |
+| `MYSQL_DSN` | 工单与审计持久化，留空用内存 |
 
-> ⚠️ `.env` 含密钥，已被 `.gitignore` 忽略，**请勿提交**。
+`.env` 含密钥，已在 `.gitignore` 中排除，不要提交。
 
-## 📡 主要 API
+## 评估
+
+`backend/cmd/eval` 是一个可复现的评测程序，在同一批带标准答案的故障案例上对比三种配置：完整的智能体（工具循环 + 向量 RAG）、仅用 BM25 的智能体、以及不调用任何工具的纯模型问答。10 个案例的一次结果：
+
+| 配置 | 根因准确率 | 证据召回 | 知识命中 | 忠实度 | 幻觉率 |
+|---|---|---|---|---|---|
+| 智能体 + 向量 RAG | 100% | 100% | 100% | 0.93 | 0% |
+| 智能体 + 仅 BM25 | 100% | 100% | 90% | 0.96 | 0% |
+| 纯模型问答（无取证） | 0% | 0% | 0% | 0.00 | 100% |
+
+其中根因准确率、忠实度、幻觉率由 LLM 判官评定。可以看到，接入证据的智能体在根因准确率和忠实度上明显优于无证据的纯模型问答，后者结论虽然听起来合理，却缺乏可核验的证据；向量检索相比纯关键词在语义化查询上略有优势。
+
+需要说明其局限：当前判官与被测为同一模型，存在自评偏差；数据集为演示规模（10 例），结论仅作方法可行性的初步验证。更严谨的评测需要独立判官与更大、更真实的数据集。
+
+## 主要接口
 
 ```
 GET  /healthz
@@ -89,20 +106,18 @@ GET  /api/v1/system/status
 GET  /api/v1/alerts/active?product_id=payment
 GET  /api/v1/logs/search?product_id=payment&query=timeout
 GET  /api/v1/knowledge/search?query=告警检索
-POST /api/v1/diagnoses            # 一次性诊断
-POST /api/v1/diagnoses/stream     # 流式诊断（SSE）
-GET  /api/v1/issues  ·  POST /api/v1/issues
+POST /api/v1/diagnoses            一次性诊断
+POST /api/v1/diagnoses/stream     流式诊断（SSE）
+GET  /api/v1/issues   POST /api/v1/issues
 GET  /api/v1/audits
 ```
 
-## 🗺️ 路线图
+## 现状与后续
 
-- [x] LLM Agent 工具调用循环、SSE 流式、多页控制台
-- [x] 夜莺 / Loki 数据源适配器（即插即用）
-- [ ] 向量检索 + RRF（真 RAG）
-- [ ] 评估数据集 + 指标（根因命中率 / 证据引用正确率 / 幻觉率）+ 对照实验
-- [ ] 认证 / 多租户、记忆空间、主动巡检、工作流
+已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、向量 RAG、评测程序。
 
-## 📄 许可
+计划中：更大规模的评测数据集与独立判官、认证与多租户，以及记忆、巡检、工作流等模块（控制台中已留占位入口）。
 
-暂定（如需开源建议 MIT；如作商业用途请保留版权）。
+## 许可
+
+暂未确定。如需引用或商用请先联系作者。
