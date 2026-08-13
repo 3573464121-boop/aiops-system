@@ -28,10 +28,10 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 	})
 	api := r.Group("/api/v1")
 	api.GET("/system/status", func(c *gin.Context) {
-		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
+		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "asset_provider": s.Tools.AssetProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
 	})
 	api.GET("/tools", func(c *gin.Context) {
-		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": s.Tools.KnowledgeMode(), "readonly": true}}})
+		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": s.Tools.KnowledgeMode(), "readonly": true}, {"name": "get_assets", "mode": s.Tools.AssetProviderName(), "readonly": true}, {"name": "lookup_ip", "mode": s.Tools.AssetProviderName(), "readonly": true}}})
 	})
 	api.GET("/alerts/active", func(c *gin.Context) {
 		v, err := s.Tools.Alerts(strings.TrimSpace(c.Query("product_id")))
@@ -66,6 +66,27 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		v := s.Tools.SearchKnowledge(q, limit)
 		c.JSON(200, gin.H{"items": v, "total": len(v), "mode": s.Tools.KnowledgeMode()})
+	})
+	api.GET("/assets", func(c *gin.Context) {
+		v, err := s.Tools.Assets(strings.TrimSpace(c.Query("product_id")))
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v), "mode": s.Tools.AssetProviderName()})
+	})
+	api.GET("/assets/lookup", func(c *gin.Context) {
+		ip := strings.TrimSpace(c.Query("ip"))
+		if ip == "" {
+			c.JSON(400, gin.H{"error": "ip is required"})
+			return
+		}
+		v, err := s.Tools.LookupIP(ip)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
 	})
 	api.POST("/diagnoses", func(c *gin.Context) {
 		var req domain.DiagnosisRequest

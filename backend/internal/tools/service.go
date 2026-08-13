@@ -9,6 +9,7 @@ type Service struct {
 	Knowledge      *knowledge.Index
 	AlertsProvider AlertProvider
 	LogsProvider   LogProvider
+	AssetsProvider AssetProvider
 	// Embed 可选：把查询向量化，用于知识库混合检索。未设置时退回 BM25。
 	Embed func(string) ([]float32, error)
 }
@@ -63,4 +64,22 @@ func (s *Service) LogProviderName() string {
 		return "demo"
 	}
 	return s.LogsProvider.Name()
+}
+func (s *Service) Assets(productID string) ([]domain.Asset, error) {
+	if s.AssetsProvider == nil {
+		s.AssetsProvider = DemoAssetProvider{}
+	}
+	return s.AssetsProvider.Assets(productID)
+}
+func (s *Service) LookupIP(ip string) ([]domain.Asset, error) {
+	if s.AssetsProvider == nil {
+		s.AssetsProvider = DemoAssetProvider{}
+	}
+	return s.AssetsProvider.LookupIP(ip)
+}
+func (s *Service) AssetProviderName() string {
+	if s.AssetsProvider == nil {
+		return "demo"
+	}
+	return s.AssetsProvider.Name()
 }

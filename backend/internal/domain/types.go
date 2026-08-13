@@ -12,6 +12,17 @@ type Alert struct {
 	Triggered time.Time `json:"triggered_at"`
 }
 
+type Asset struct {
+	ID        string `json:"id"`
+	ProductID string `json:"product_id"`
+	Kind      string `json:"kind"` // server | db
+	Name      string `json:"name"`
+	IP        string `json:"ip"`
+	Detail    string `json:"detail"`
+	Env       string `json:"env"`
+	Status    string `json:"status"` // online | offline
+}
+
 type Evidence struct {
 	Type    string  `json:"type"`
 	Title   string  `json:"title"`

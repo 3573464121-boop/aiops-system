@@ -160,6 +160,22 @@ func (s *Service) runToolCall(tc llm.ToolCall) (out, summary, status string, ale
 		}
 		k := s.Tools.SearchKnowledge(q, limit)
 		return toJSON(k), fmt.Sprintf("命中 %d 条知识片段", len(k)), "success", nil, k
+	case "get_assets":
+		as, err := s.Tools.Assets(str("product_id"))
+		if err != nil {
+			return toolErr(err.Error()), err.Error(), "error", nil, nil
+		}
+		return toJSON(as), fmt.Sprintf("命中 %d 个资产", len(as)), "success", nil, assetsToEvidence(as)
+	case "lookup_ip":
+		ip := str("ip")
+		if ip == "" {
+			return toolErr("缺少必填参数 ip"), "缺少必填参数 ip", "error", nil, nil
+		}
+		as, err := s.Tools.LookupIP(ip)
+		if err != nil {
+			return toolErr(err.Error()), err.Error(), "error", nil, nil
+		}
+		return toJSON(as), fmt.Sprintf("IP %s 命中 %d 个资产", ip, len(as)), "success", nil, assetsToEvidence(as)
 	default:
 		msg := "未知工具：" + tc.Function.Name
 		return toolErr(msg), msg, "error", nil, nil
@@ -226,6 +242,8 @@ func agentSystemPrompt() string {
 - get_alerts(product_id?)：查询活跃告警
 - search_logs(product_id, query?)：搜索异常日志
 - search_knowledge(query, limit?)：检索运维知识库/历史故障
+- get_assets(product_id?)：查询资产清单（服务器 / 数据库实例）
+- lookup_ip(ip)：按 IP 反查所属资产与产品归属
 
 要求：
 1. 必须先调用工具收集证据，不要凭空臆测。一般先看告警，再按线索搜日志，必要时查知识库。
@@ -269,6 +287,27 @@ func agentTools() []llm.Tool {
 					"limit": map[string]any{"type": "integer", "description": "返回条数，默认 3，最大 20"},
 				},
 				"required": []string{"query"},
+			},
+		}},
+		{Type: "function", Function: llm.FunctionDef{
+			Name:        "get_assets",
+			Description: "查询产品的资产清单（服务器与数据库实例）。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"product_id": map[string]any{"type": "string", "description": "产品标识，留空表示全部"},
+				},
+			},
+		}},
+		{Type: "function", Function: llm.FunctionDef{
+			Name:        "lookup_ip",
+			Description: "按 IP 反查所属资产与产品归属。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ip": map[string]any{"type": "string", "description": "IPv4 地址，必填"},
+				},
+				"required": []string{"ip"},
 			},
 		}},
 	}
@@ -327,6 +366,14 @@ func toJSON(v any) string {
 func toolErr(msg string) string {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	return string(b)
+}
+
+func assetsToEvidence(as []domain.Asset) []domain.Evidence {
+	out := make([]domain.Evidence, 0, len(as))
+	for _, a := range as {
+		out = append(out, domain.Evidence{Type: "asset", Title: a.Name, Content: fmt.Sprintf("%s · %s · IP %s · %s · %s", a.ProductID, a.Detail, a.IP, a.Env, a.Status), Score: .6, Source: "get_assets/" + a.ID})
+	}
+	return out
 }
 
 func nonnullHypotheses(v []domain.Hypothesis) []domain.Hypothesis {
