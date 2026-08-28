@@ -90,6 +90,36 @@ type AuditEvent struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// InspectionTask 是一条主动巡检任务：定时对某产品跑一次诊断。
+type InspectionTask struct {
+	ID          string    `json:"id"`
+	ProductID   string    `json:"product_id"`
+	Question    string    `json:"question"`
+	IntervalSec int       `json:"interval_sec"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastRunAt   time.Time `json:"last_run_at"` // 零值表示尚未运行
+	LastStatus  string    `json:"last_status"` // ok | warn | high | error
+}
+type InspectionTaskRequest struct {
+	ProductID   string `json:"product_id" binding:"required"`
+	Question    string `json:"question"`
+	IntervalSec int    `json:"interval_sec"`
+}
+
+// InspectionReport 是一次巡检运行沉淀下来的结果。
+type InspectionReport struct {
+	ID         string    `json:"id"`
+	TaskID     string    `json:"task_id"`
+	ProductID  string    `json:"product_id"`
+	Question   string    `json:"question"`
+	Summary    string    `json:"summary"`
+	Confidence float64   `json:"confidence"`
+	Risk       string    `json:"risk"` // ok | warn | high
+	DurationMS int64     `json:"duration_ms"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // StreamEvent 是流式诊断过程中实时推送给前端的单条事件。
 type StreamEvent struct {
 	Type    string           `json:"type"`              // status | tool_call | tool_result | result | error | done

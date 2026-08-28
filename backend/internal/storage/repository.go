@@ -8,5 +8,14 @@ type Repository interface {
 	ListIssues() ([]domain.Issue, error)
 	AddAudit(domain.AuditEvent) error
 	ListAudits(limit int) ([]domain.AuditEvent, error)
+
+	CreateInspectionTask(domain.InspectionTask) error
+	ListInspectionTasks() ([]domain.InspectionTask, error)
+	GetInspectionTask(id string) (domain.InspectionTask, error)
+	UpdateInspectionTask(domain.InspectionTask) error
+	DeleteInspectionTask(id string) error
+	AddInspectionReport(domain.InspectionReport) error
+	ListInspectionReports(taskID string, limit int) ([]domain.InspectionReport, error)
+
 	Close() error
 }

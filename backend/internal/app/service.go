@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"aiops-mvp/internal/domain"
@@ -14,9 +15,10 @@ import (
 )
 
 type Service struct {
-	Tools *tools.Service
-	LLM   *llm.Client
-	Repo  storage.Repository
+	Tools     *tools.Service
+	LLM       *llm.Client
+	Repo      storage.Repository
+	inspectMu sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
 }
 
 func New(t *tools.Service, l *llm.Client, repos ...storage.Repository) *Service {

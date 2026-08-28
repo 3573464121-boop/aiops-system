@@ -54,6 +54,28 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			created_at DATETIME NOT NULL,
 			INDEX idx_audits_product_created (product_id, created_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS inspection_tasks (
+			id VARCHAR(64) PRIMARY KEY,
+			product_id VARCHAR(128) NOT NULL,
+			question VARCHAR(512) NOT NULL,
+			interval_sec INT NOT NULL,
+			enabled TINYINT(1) NOT NULL,
+			created_at DATETIME NOT NULL,
+			last_run_at DATETIME NULL,
+			last_status VARCHAR(16) NOT NULL DEFAULT ''
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS inspection_reports (
+			id VARCHAR(64) PRIMARY KEY,
+			task_id VARCHAR(64) NOT NULL,
+			product_id VARCHAR(128) NOT NULL,
+			question VARCHAR(512) NOT NULL,
+			summary TEXT NOT NULL,
+			confidence DOUBLE NOT NULL,
+			risk VARCHAR(16) NOT NULL,
+			duration_ms BIGINT NOT NULL,
+			created_at DATETIME NOT NULL,
+			INDEX idx_reports_task_created (task_id, created_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, statement := range statements {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil {
@@ -106,4 +128,96 @@ func (m *MySQL) ListAudits(limit int) ([]domain.AuditEvent, error) {
 	}
 	return out, rows.Err()
 }
+func nullTime(t time.Time) sql.NullTime {
+	if t.IsZero() {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: t, Valid: true}
+}
+
+func (m *MySQL) CreateInspectionTask(v domain.InspectionTask) error {
+	_, err := m.db.Exec(`INSERT INTO inspection_tasks (id, product_id, question, interval_sec, enabled, created_at, last_run_at, last_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.ProductID, v.Question, v.IntervalSec, v.Enabled, v.CreatedAt, nullTime(v.LastRunAt), v.LastStatus)
+	return err
+}
+func scanTask(rows *sql.Rows) (domain.InspectionTask, error) {
+	var v domain.InspectionTask
+	var last sql.NullTime
+	if err := rows.Scan(&v.ID, &v.ProductID, &v.Question, &v.IntervalSec, &v.Enabled, &v.CreatedAt, &last, &v.LastStatus); err != nil {
+		return v, err
+	}
+	if last.Valid {
+		v.LastRunAt = last.Time
+	}
+	return v, nil
+}
+func (m *MySQL) ListInspectionTasks() ([]domain.InspectionTask, error) {
+	rows, err := m.db.Query(`SELECT id, product_id, question, interval_sec, enabled, created_at, last_run_at, last_status FROM inspection_tasks ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.InspectionTask, 0)
+	for rows.Next() {
+		v, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+func (m *MySQL) GetInspectionTask(id string) (domain.InspectionTask, error) {
+	var v domain.InspectionTask
+	var last sql.NullTime
+	err := m.db.QueryRow(`SELECT id, product_id, question, interval_sec, enabled, created_at, last_run_at, last_status FROM inspection_tasks WHERE id = ?`, id).
+		Scan(&v.ID, &v.ProductID, &v.Question, &v.IntervalSec, &v.Enabled, &v.CreatedAt, &last, &v.LastStatus)
+	if err != nil {
+		return domain.InspectionTask{}, err
+	}
+	if last.Valid {
+		v.LastRunAt = last.Time
+	}
+	return v, nil
+}
+func (m *MySQL) UpdateInspectionTask(v domain.InspectionTask) error {
+	_, err := m.db.Exec(`UPDATE inspection_tasks SET product_id=?, question=?, interval_sec=?, enabled=?, last_run_at=?, last_status=? WHERE id=?`,
+		v.ProductID, v.Question, v.IntervalSec, v.Enabled, nullTime(v.LastRunAt), v.LastStatus, v.ID)
+	return err
+}
+func (m *MySQL) DeleteInspectionTask(id string) error {
+	_, err := m.db.Exec(`DELETE FROM inspection_tasks WHERE id = ?`, id)
+	return err
+}
+func (m *MySQL) AddInspectionReport(v domain.InspectionReport) error {
+	_, err := m.db.Exec(`INSERT INTO inspection_reports (id, task_id, product_id, question, summary, confidence, risk, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.TaskID, v.ProductID, v.Question, v.Summary, v.Confidence, v.Risk, v.DurationMS, v.CreatedAt)
+	return err
+}
+func (m *MySQL) ListInspectionReports(taskID string, limit int) ([]domain.InspectionReport, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var rows *sql.Rows
+	var err error
+	if taskID == "" {
+		rows, err = m.db.Query(`SELECT id, task_id, product_id, question, summary, confidence, risk, duration_ms, created_at FROM inspection_reports ORDER BY created_at DESC LIMIT ?`, limit)
+	} else {
+		rows, err = m.db.Query(`SELECT id, task_id, product_id, question, summary, confidence, risk, duration_ms, created_at FROM inspection_reports WHERE task_id = ? ORDER BY created_at DESC LIMIT ?`, taskID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.InspectionReport, 0)
+	for rows.Next() {
+		var v domain.InspectionReport
+		if err = rows.Scan(&v.ID, &v.TaskID, &v.ProductID, &v.Question, &v.Summary, &v.Confidence, &v.Risk, &v.DurationMS, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 func (m *MySQL) Close() error { return m.db.Close() }

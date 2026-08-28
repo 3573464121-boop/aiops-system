@@ -83,6 +83,13 @@ func main() {
 
 	llmClient := &llm.Client{BaseURL: os.Getenv("LLM_BASE_URL"), APIKey: os.Getenv("LLM_API_KEY"), Model: os.Getenv("LLM_MODEL")}
 	service := app.New(toolService, llmClient, repo)
+
+	// 主动巡检调度器：进程内定时跑到期的巡检任务。
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	defer schedCancel()
+	service.StartInspectionScheduler(schedCtx)
+	log.Printf("主动巡检调度器已启动")
+
 	router := httpapi.New(service, indexSize(index), storageMode)
 	addr := env("APP_ADDR", ":8080")
 	log.Printf("AIOps API listening on %s (storage=%s)", addr, storageMode)

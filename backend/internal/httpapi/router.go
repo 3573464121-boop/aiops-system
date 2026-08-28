@@ -22,7 +22,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 	}
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173"}, AllowMethods: []string{"GET", "POST", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID"}, MaxAge: 12 * time.Hour}))
+	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173"}, AllowMethods: []string{"GET", "POST", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID"}, MaxAge: 12 * time.Hour}))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "time": time.Now(), "knowledge_chunks": knowledgeCount, "storage": storageMode})
 	})
@@ -157,6 +157,70 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 			return
 		}
 		c.JSON(http.StatusCreated, v)
+	})
+	api.GET("/inspections", func(c *gin.Context) {
+		v, err := s.ListInspectionTasks()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
+	})
+	api.POST("/inspections", func(c *gin.Context) {
+		var req domain.InspectionTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		req.ProductID = strings.TrimSpace(req.ProductID)
+		if req.ProductID == "" {
+			c.JSON(400, gin.H{"error": "product_id cannot be blank"})
+			return
+		}
+		v, err := s.CreateInspectionTask(req)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.POST("/inspections/:id/toggle", func(c *gin.Context) {
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := s.ToggleInspectionTask(c.Param("id"), body.Enabled); err != nil {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+	api.POST("/inspections/:id/run", func(c *gin.Context) {
+		v, err := s.RunInspectionNow(c.Param("id"))
+		if err != nil {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
+	api.DELETE("/inspections/:id", func(c *gin.Context) {
+		if err := s.DeleteInspectionTask(c.Param("id")); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+	api.GET("/inspection-reports", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		v, err := s.ListInspectionReports(strings.TrimSpace(c.Query("task_id")), limit)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
 	})
 	api.GET("/audits", func(c *gin.Context) {
 		v, err := s.Audits()
