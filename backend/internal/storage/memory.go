@@ -11,12 +11,13 @@ type Memory struct {
 	mu      sync.RWMutex
 	issues  []domain.Issue
 	audits  []domain.AuditEvent
-	tasks   []domain.InspectionTask
-	reports []domain.InspectionReport
+	tasks    []domain.InspectionTask
+	reports  []domain.InspectionReport
+	memories []domain.Memory
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -112,6 +113,30 @@ func (m *Memory) ListInspectionReports(taskID string, limit int) ([]domain.Inspe
 		}
 	}
 	return out, nil
+}
+
+func (m *Memory) CreateMemory(v domain.Memory) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.memories = append([]domain.Memory{v}, m.memories...)
+	return nil
+}
+func (m *Memory) ListMemories() ([]domain.Memory, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]domain.Memory(nil), m.memories...), nil
+}
+func (m *Memory) DeleteMemory(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := m.memories[:0]
+	for _, v := range m.memories {
+		if v.ID != id {
+			out = append(out, v)
+		}
+	}
+	m.memories = out
+	return nil
 }
 
 func (m *Memory) Close() error { return nil }

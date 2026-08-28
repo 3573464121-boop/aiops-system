@@ -76,6 +76,16 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			created_at DATETIME NOT NULL,
 			INDEX idx_reports_task_created (task_id, created_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS memories (
+			id VARCHAR(64) PRIMARY KEY,
+			scope VARCHAR(16) NOT NULL,
+			product_id VARCHAR(128) NOT NULL DEFAULT '',
+			kind VARCHAR(16) NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			source VARCHAR(32) NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			INDEX idx_memories_scope_product (scope, product_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, statement := range statements {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil {
@@ -218,6 +228,32 @@ func (m *MySQL) ListInspectionReports(taskID string, limit int) ([]domain.Inspec
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (m *MySQL) CreateMemory(v domain.Memory) error {
+	_, err := m.db.Exec(`INSERT INTO memories (id, scope, product_id, kind, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.Scope, v.ProductID, v.Kind, v.Content, v.Source, v.CreatedAt)
+	return err
+}
+func (m *MySQL) ListMemories() ([]domain.Memory, error) {
+	rows, err := m.db.Query(`SELECT id, scope, product_id, kind, content, source, created_at FROM memories ORDER BY created_at DESC LIMIT 500`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Memory, 0)
+	for rows.Next() {
+		var v domain.Memory
+		if err = rows.Scan(&v.ID, &v.Scope, &v.ProductID, &v.Kind, &v.Content, &v.Source, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+func (m *MySQL) DeleteMemory(id string) error {
+	_, err := m.db.Exec(`DELETE FROM memories WHERE id = ?`, id)
+	return err
 }
 
 func (m *MySQL) Close() error { return m.db.Close() }

@@ -31,7 +31,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "asset_provider": s.Tools.AssetProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
 	})
 	api.GET("/tools", func(c *gin.Context) {
-		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": s.Tools.KnowledgeMode(), "readonly": true}, {"name": "get_assets", "mode": s.Tools.AssetProviderName(), "readonly": true}, {"name": "lookup_ip", "mode": s.Tools.AssetProviderName(), "readonly": true}}})
+		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": s.Tools.KnowledgeMode(), "readonly": true}, {"name": "get_assets", "mode": s.Tools.AssetProviderName(), "readonly": true}, {"name": "lookup_ip", "mode": s.Tools.AssetProviderName(), "readonly": true}, {"name": "recall_memory", "mode": "memory", "readonly": true}}})
 	})
 	api.GET("/alerts/active", func(c *gin.Context) {
 		v, err := s.Tools.Alerts(strings.TrimSpace(c.Query("product_id")))
@@ -221,6 +221,47 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 			return
 		}
 		c.JSON(200, gin.H{"items": v, "total": len(v)})
+	})
+	api.GET("/memories", func(c *gin.Context) {
+		v, err := s.ListMemories()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
+	})
+	api.POST("/memories", func(c *gin.Context) {
+		var req domain.MemoryRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.CreateMemory(req)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.DELETE("/memories/:id", func(c *gin.Context) {
+		if err := s.DeleteMemory(c.Param("id")); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+	api.POST("/memories/extract", func(c *gin.Context) {
+		var req domain.MemoryExtractRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		draft, err := s.ExtractMemory(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"draft": draft})
 	})
 	api.GET("/audits", func(c *gin.Context) {
 		v, err := s.Audits()

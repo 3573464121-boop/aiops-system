@@ -59,8 +59,14 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 
 	messages := []llm.Message{
 		{Role: "system", Content: agentSystemPrompt()},
-		{Role: "user", Content: fmt.Sprintf("产品标识：%s\n诊断问题：%s\n时间窗口：最近 %d 分钟", req.ProductID, req.Question, req.WindowMinute)},
 	}
+	// 召回相关的长期记忆，作为背景注入，并计入证据。
+	if recalled := s.recallMemories(req.ProductID, req.Question, maxRecall); len(recalled) > 0 {
+		messages = append(messages, llm.Message{Role: "system", Content: memoryNote(recalled)})
+		evidence = append(evidence, memoriesToEvidence(recalled)...)
+		emit(domain.StreamEvent{Type: "status", Message: fmt.Sprintf("已召回 %d 条相关记忆", len(recalled))})
+	}
+	messages = append(messages, llm.Message{Role: "user", Content: fmt.Sprintf("产品标识：%s\n诊断问题：%s\n时间窗口：最近 %d 分钟", req.ProductID, req.Question, req.WindowMinute)})
 	toolDefs := agentTools()
 
 	var finalContent string
@@ -92,7 +98,7 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 	result := domain.DiagnosisResult{
 		Question:   req.Question,
 		ProductID:  req.ProductID,
-		Evidence:   evidence,
+		Evidence:   dedupEvidence(evidence),
 		Alerts:     alerts,
 		Trace:      trace,
 		Mode:       "agent",
@@ -178,6 +184,13 @@ func (s *Service) runToolCall(tc llm.ToolCall) (out, summary, status string, ale
 			return toolErr(err.Error()), err.Error(), "error", nil, nil
 		}
 		return toJSON(as), fmt.Sprintf("IP %s 命中 %d 个资产", ip, len(as)), "success", nil, assetsToEvidence(as)
+	case "recall_memory":
+		q := str("query")
+		if q == "" {
+			return toolErr("缺少必填参数 query"), "缺少必填参数 query", "error", nil, nil
+		}
+		ms := s.recallMemories(str("product_id"), q, maxRecall)
+		return toJSON(ms), fmt.Sprintf("召回 %d 条记忆", len(ms)), "success", nil, memoriesToEvidence(ms)
 	default:
 		msg := "未知工具：" + tc.Function.Name
 		return toolErr(msg), msg, "error", nil, nil
@@ -246,6 +259,7 @@ func agentSystemPrompt() string {
 - search_knowledge(query, limit?)：检索运维知识库/历史故障
 - get_assets(product_id?)：查询资产清单（服务器 / 数据库实例）
 - lookup_ip(ip)：按 IP 反查所属资产与产品归属
+- recall_memory(query, product_id?)：检索历史经验/环境记忆
 
 要求：
 1. 必须先调用工具收集证据，不要凭空臆测。一般先看告警，再按线索搜日志，必要时查知识库。
@@ -312,6 +326,18 @@ func agentTools() []llm.Tool {
 				"required": []string{"ip"},
 			},
 		}},
+		{Type: "function", Function: llm.FunctionDef{
+			Name:        "recall_memory",
+			Description: "检索沉淀下来的历史经验/环境记忆（如某产品的容量上限、既往根因），按相关度返回。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query":      map[string]any{"type": "string", "description": "检索关键词，必填"},
+					"product_id": map[string]any{"type": "string", "description": "产品标识，可选，用于优先召回该产品的记忆"},
+				},
+				"required": []string{"query"},
+			},
+		}},
 	}
 }
 
@@ -368,6 +394,22 @@ func toJSON(v any) string {
 func toolErr(msg string) string {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	return string(b)
+}
+
+// dedupEvidence 按 Source 去重（同一条记忆可能既被自动注入又被 recall_memory 工具召回）。空 Source 一律保留。
+func dedupEvidence(evs []domain.Evidence) []domain.Evidence {
+	seen := make(map[string]struct{}, len(evs))
+	out := make([]domain.Evidence, 0, len(evs))
+	for _, e := range evs {
+		if e.Source != "" {
+			if _, ok := seen[e.Source]; ok {
+				continue
+			}
+			seen[e.Source] = struct{}{}
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func assetsToEvidence(as []domain.Asset) []domain.Evidence {

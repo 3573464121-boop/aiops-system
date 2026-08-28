@@ -7,6 +7,7 @@ import Issues from './views/Issues.vue'
 import Audits from './views/Audits.vue'
 import Assets from './views/Assets.vue'
 import Inspection from './views/Inspection.vue'
+import Memory from './views/Memory.vue'
 import ComingSoon from './views/ComingSoon.vue'
 
 const routes = [
@@ -16,7 +17,7 @@ const routes = [
   { path: '/knowledge', component: Knowledge },
   { path: '/issues', component: Issues },
   { path: '/audits', component: Audits },
-  { path: '/memory', component: ComingSoon, props: { title: '记忆空间', desc: '跨对话长期记忆：提取 → 反射 → 召回，个人 / 组 / 全局三级作用域。' } },
+  { path: '/memory', component: Memory },
   { path: '/inspection', component: Inspection },
   { path: '/assets', component: Assets },
   { path: '/workflow', component: ComingSoon, props: { title: '工作流', desc: '可视化编排诊断与处置流程、规则路由与规则演化。' } },

@@ -17,5 +17,9 @@ type Repository interface {
 	AddInspectionReport(domain.InspectionReport) error
 	ListInspectionReports(taskID string, limit int) ([]domain.InspectionReport, error)
 
+	CreateMemory(domain.Memory) error
+	ListMemories() ([]domain.Memory, error)
+	DeleteMemory(id string) error
+
 	Close() error
 }

@@ -120,6 +120,29 @@ type InspectionReport struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// Memory 是 Agent 的一条长期记忆：从诊断中沉淀、可跨对话复用的经验或环境事实。
+// Scope 目前支持 global（全局）与 product（限定某产品）；个人/团队作用域待认证模块接入后再细分。
+type Memory struct {
+	ID        string    `json:"id"`
+	Scope     string    `json:"scope"`      // global | product
+	ProductID string    `json:"product_id"` // scope=product 时生效
+	Kind      string    `json:"kind"`       // fact | fix | preference
+	Content   string    `json:"content"`
+	Source    string    `json:"source"` // manual | extracted | diagnosis
+	CreatedAt time.Time `json:"created_at"`
+}
+type MemoryRequest struct {
+	Scope     string `json:"scope"`
+	ProductID string `json:"product_id"`
+	Kind      string `json:"kind"`
+	Content   string `json:"content" binding:"required"`
+	Source    string `json:"source"`
+}
+type MemoryExtractRequest struct {
+	ProductID string `json:"product_id"`
+	Text      string `json:"text" binding:"required"`
+}
+
 // StreamEvent 是流式诊断过程中实时推送给前端的单条事件。
 type StreamEvent struct {
 	Type    string           `json:"type"`              // status | tool_call | tool_result | result | error | done
