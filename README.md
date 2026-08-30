@@ -1,6 +1,6 @@
 # 智能运维诊断助手（AIOps）
 
-一个基于大语言模型的运维故障诊断系统。给定一条告警或故障描述，系统会自主调用一组只读工具（查询告警、检索日志、检索知识库）收集证据，再由模型综合出带根因分析、处置建议和证据链的结构化诊断，推理过程可流式展示，诊断结果可一键沉淀为工单。
+一个基于大语言模型的运维故障诊断系统。给定一条告警或故障描述，系统会自主调用一组只读工具（查询告警、检索日志、检索知识库、查询资产、召回历史记忆）收集证据，再由模型综合出带根因分析、处置建议和证据链的结构化诊断，推理过程可流式展示，诊断结果可一键沉淀为工单。除人工提问外，还可配置主动巡检定时自动诊断。
 
 设计上坚持一个原则：先给出有证据支撑的辅助判断，再谈自动处置。因此所有工具都是只读的，回滚、重启、扩容等高风险操作只会被标记为“需人工审批”，不会自动执行。
 
@@ -9,25 +9,31 @@
 - 工具调用循环。模型自主决定调用哪些工具、最多五轮，逐步取证，全过程记录调用轨迹。
 - 流式诊断。通过 SSE 把每一步工具调用与结果实时推送到前端，而不是等待整段结果返回。
 - 知识检索。Markdown 文档按标题分块，BM25 关键词检索与向量检索（bge-m3）经 RRF 融合，回答附带引用来源。
+- 资产管理（CMDB）。服务器、数据库等资产按产品归档，支持 IP 反查；诊断时作为 `get_assets` / `lookup_ip` 工具供模型取证。
+- 主动巡检。为产品配置定时巡检任务，进程内调度器按周期自动跑诊断并沉淀巡检报告，按风险分级（正常/关注/高风险）标记。
+- 记忆空间。跨对话沉淀长期经验与环境事实，诊断时按相关度自动召回并作为背景注入，模型也可主动调用 `recall_memory`；支持从诊断结论用模型提炼记忆草稿。
+- 认证与权限。用户名密码登录，bcrypt 存哈希，HMAC 签名令牌鉴权；分管理员与只读两种角色，管理类操作（配置、增删）仅管理员可执行。
 - 可插拔数据源。告警与日志通过 Provider 接口接入，内置夜莺（Nightingale）与 Loki 适配器，未配置时使用内置演示数据；可扩展 Elasticsearch、ClickHouse 等。
 - 可审计。工具调用轨迹、证据来源、操作审计日志齐全；高风险动作强制标记需审批。
 - 多模型。OpenAI 兼容接口，默认对接 DeepSeek，也可切换到本机 Ollama。
-- 控制台。Vue 3 + Ant Design，包含仪表盘、运维助手对话、告警、知识库、工单、审计等页面。
-- 持久化。工单与审计写入 MySQL，不可用时自动回退内存。
+- 控制台。Vue 3 + Ant Design，包含登录、仪表盘、运维助手对话、告警、知识库、工单、审计、记忆空间、巡检管理、资产管理等页面。
+- 持久化。工单、审计、巡检、记忆、用户均写入 MySQL，不可用时自动回退内存。
 
 ## 架构
 
 ```
-运维助手对话页 (Vue 3 + Ant Design, SSE)
+运维助手对话页 (Vue 3 + Ant Design, SSE)  ←  登录鉴权(角色: 管理员/只读)
         │
         ▼
 Agent 工具调用循环 (Go)  →  get_alerts / search_logs / search_knowledge
-        │  最多 5 轮，模型自主编排、逐步取证、记录轨迹
+        │  最多 5 轮，模型自主编排、逐步取证、记录轨迹     get_assets / lookup_ip / recall_memory
         ▼
-LLM (OpenAI 兼容) 基于收集到的证据产出结构化诊断
+LLM (OpenAI 兼容) 基于收集到的证据 + 召回的长期记忆产出结构化诊断
         │
         ▼
 根因分析 · 处置建议(含风险分级/审批) · 证据链 · 一键工单 (MySQL)
+        ▲
+        │  主动巡检调度器 (进程内定时) 按周期自动触发诊断并沉淀巡检报告
 ```
 
 ```
@@ -35,17 +41,18 @@ backend/
   cmd/server/        服务入口，按环境变量选择数据源与存储
   cmd/eval/          诊断质量评测程序
   internal/
-    app/             诊断编排：工具循环、流式、工单、审计
+    app/             诊断编排：工具循环、流式、工单、审计、巡检、记忆、认证
+    auth/            HMAC 签名登录令牌的签发与校验
     domain/          领域模型
-    httpapi/         HTTP 路由（含 SSE 流式接口）
+    httpapi/         HTTP 路由（含 SSE 流式接口、登录与角色鉴权中间件）
     knowledge/       Markdown 分块、BM25、向量检索、RRF
     llm/             OpenAI 兼容客户端（工具调用、限流退避重试）
     embed/           文本向量化客户端
-    storage/         Repository：内存 / MySQL
-    tools/           Provider 接口、夜莺/Loki 适配器、演示数据
+    storage/         Repository：内存 / MySQL（工单/审计/巡检/记忆/用户）
+    tools/           Provider 接口、夜莺/Loki 适配器、资产源、演示数据
   knowledge-base/    历史故障复盘与运维手册
 frontend/
-  src/               App.vue（导航）、router、api、views/
+  src/               App.vue（导航/登录态）、router（守卫）、api（带令牌）、views/
 ```
 
 ## 技术栈
@@ -80,9 +87,13 @@ npm run dev                # 默认 http://localhost:5173
 | `EMBED_BASE_URL` / `EMBED_MODEL` | 向量检索嵌入模型，例如本机 Ollama 的 `bge-m3`；留空则只用 BM25 |
 | `N9E_BASE_URL` / `N9E_TOKEN` | 夜莺告警源，留空用演示数据 |
 | `LOG_BASE_URL` / `LOG_TOKEN` | Loki 日志源，留空用演示数据 |
-| `MYSQL_DSN` | 工单与审计持久化，留空用内存 |
+| `MYSQL_DSN` | 工单、审计、巡检、记忆、用户的持久化，留空用内存 |
+| `AUTH_SECRET` | 登录令牌签名密钥，生产环境务必改为随机串；留空用内置开发密钥并告警 |
+| `AUTH_ADMIN_PASSWORD` | 首次启动无用户时自动创建的管理员 `admin` 初始口令，留空默认 `admin123` |
 
 `.env` 含密钥，已在 `.gitignore` 中排除，不要提交。
+
+**首次登录**：系统启动时若数据库中没有任何用户，会自动创建管理员账号 `admin`（口令取自 `AUTH_ADMIN_PASSWORD`，默认 `admin123`），初始口令也会打印在启动日志里。登录后管理员可在后台新增只读账号。
 
 ## 评估
 
@@ -100,23 +111,45 @@ npm run dev                # 默认 http://localhost:5173
 
 ## 主要接口
 
+除 `/healthz` 与 `/api/v1/auth/login` 外，所有 `/api/v1` 接口都需在请求头带 `Authorization: Bearer <token>`；标注「仅管理员」的还要求管理员角色。
+
 ```
 GET  /healthz
+POST /api/v1/auth/login           登录，换取令牌
+GET  /api/v1/auth/me              当前登录用户
 GET  /api/v1/system/status
 GET  /api/v1/alerts/active?product_id=payment
 GET  /api/v1/logs/search?product_id=payment&query=timeout
 GET  /api/v1/knowledge/search?query=告警检索
+GET  /api/v1/assets?product_id=payment          资产列表
+GET  /api/v1/assets/lookup?ip=10.0.0.1          IP 反查资产
 POST /api/v1/diagnoses            一次性诊断
 POST /api/v1/diagnoses/stream     流式诊断（SSE）
 GET  /api/v1/issues   POST /api/v1/issues
+GET  /api/v1/inspections          巡检任务列表
+POST /api/v1/inspections                        新建巡检任务（仅管理员）
+POST /api/v1/inspections/:id/toggle             启用/停用（仅管理员）
+POST /api/v1/inspections/:id/run                立即巡检（仅管理员）
+DELETE /api/v1/inspections/:id                  删除（仅管理员）
+GET  /api/v1/inspection-reports?task_id=&limit= 巡检报告
+GET  /api/v1/memories             记忆列表
+POST /api/v1/memories                           新增记忆（仅管理员）
+DELETE /api/v1/memories/:id                     删除记忆（仅管理员）
+POST /api/v1/memories/extract                   从文本提炼记忆草稿（仅管理员）
+GET  /api/v1/users   POST /api/v1/users         用户管理（仅管理员）
 GET  /api/v1/audits
 ```
 
 ## 现状与后续
 
-已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、向量 RAG、评测程序。
+已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、向量 RAG、评测程序、资产管理（CMDB）、主动巡检、记忆空间、认证与角色权限。
 
-计划中：更大规模的评测数据集与独立判官、认证与多租户，以及记忆、巡检、工作流等模块（控制台中已留占位入口）。
+计划中：
+
+- 审计日志记录操作人（当前已有登录身份，尚未贯穿到审计事件）；
+- 记忆的个人 / 团队作用域（当前支持全局 / 产品两级，个人 / 团队待接入用户身份后细分）；
+- 工作流模块：把诊断与处置流程做成可视化编排（控制台中已留占位入口）；
+- 更大规模、更真实的评测数据集与独立判官。
 
 ## 许可
 
