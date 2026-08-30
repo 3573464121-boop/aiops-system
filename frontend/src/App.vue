@@ -1,14 +1,26 @@
 <script setup>
-import { ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   DashboardOutlined, RobotOutlined, AlertOutlined, ReadOutlined, ProfileOutlined, AuditOutlined,
   BulbOutlined, ScheduleOutlined, DatabaseOutlined, ApartmentOutlined,
-  MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltFilled,
+  MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltFilled, LogoutOutlined, UserOutlined,
 } from '@ant-design/icons-vue'
+import { getUser, clearSession } from './api'
 
 const collapsed = ref(false)
 const route = useRoute()
+const router = useRouter()
+
+const isLoginPage = computed(() => route.path === '/login')
+const user = ref(getUser())
+watch(() => route.path, () => { user.value = getUser() }) // 登录/登出后刷新当前用户
+const roleText = computed(() => (user.value?.role === 'admin' ? '管理员' : '只读'))
+
+function logout() {
+  clearSession()
+  router.replace('/login')
+}
 const nav = [
   { to: '/', label: '仪表盘', icon: DashboardOutlined },
   { to: '/assistant', label: '运维助手', icon: RobotOutlined },
@@ -25,7 +37,8 @@ const nav = [
 </script>
 
 <template>
-  <div class="layout">
+  <router-view v-if="isLoginPage" />
+  <div v-else class="layout">
     <nav :class="['rail', { collapsed }]">
       <div class="logo"><ThunderboltFilled /><span v-if="!collapsed">智能运维</span></div>
       <div class="nav">
@@ -36,6 +49,16 @@ const nav = [
             <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
           </router-link>
         </template>
+      </div>
+      <div v-if="user" class="user" :class="{ clickable: collapsed }" :title="collapsed ? '退出登录' : user.username + ' · ' + roleText" @click="collapsed && logout()">
+        <UserOutlined class="user-ic" />
+        <div v-if="!collapsed" class="user-meta">
+          <span class="user-name">{{ user.username }}</span>
+          <span class="user-role">{{ roleText }}</span>
+        </div>
+        <a-tooltip title="退出登录" placement="right">
+          <button v-if="!collapsed" class="logout" @click="logout"><LogoutOutlined /></button>
+        </a-tooltip>
       </div>
       <button class="collapse" @click="collapsed = !collapsed">
         <component :is="collapsed ? MenuUnfoldOutlined : MenuFoldOutlined" />
@@ -58,7 +81,16 @@ const nav = [
 .nav-item:hover { background: #182740; color: #fff; }
 .nav-item.active { background: #1677ff; color: #fff; }
 .nav-div { height: 1px; background: #1c2c44; margin: 10px 8px; }
-.collapse { margin-top: auto; display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; color: #8fa3b8; padding: 11px 13px; cursor: pointer; border-radius: 10px; font-size: 14px; }
+.user { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-radius: 10px; color: #c7d2de; white-space: nowrap; }
+.user.clickable { cursor: pointer; }
+.user.clickable:hover { background: #182740; color: #fff; }
+.user-ic { font-size: 17px; color: #4db8ff; flex: none; }
+.user-meta { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.user-name { font-size: 13px; color: #fff; overflow: hidden; text-overflow: ellipsis; }
+.user-role { font-size: 11px; color: #8fa3b8; }
+.logout { margin-left: auto; background: transparent; border: 0; color: #8fa3b8; cursor: pointer; font-size: 15px; padding: 4px; border-radius: 6px; flex: none; }
+.logout:hover { color: #ff7875; background: #182740; }
+.collapse { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; color: #8fa3b8; padding: 11px 13px; cursor: pointer; border-radius: 10px; font-size: 14px; }
 .collapse:hover { background: #182740; color: #fff; }
 .content { flex: 1; min-width: 0; background: #f5f6f8; overflow: hidden; display: flex; }
 </style>

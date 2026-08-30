@@ -8,9 +8,12 @@ import Audits from './views/Audits.vue'
 import Assets from './views/Assets.vue'
 import Inspection from './views/Inspection.vue'
 import Memory from './views/Memory.vue'
+import Login from './views/Login.vue'
 import ComingSoon from './views/ComingSoon.vue'
+import { isLoggedIn } from './api'
 
 const routes = [
+  { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
   { path: '/assistant', component: Assistant },
   { path: '/alerts', component: Alerts },
@@ -24,4 +27,14 @@ const routes = [
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
-export default createRouter({ history: createWebHashHistory(), routes })
+const router = createRouter({ history: createWebHashHistory(), routes })
+
+// 路由守卫：未登录只能访问登录页；已登录再访问登录页则回到首页。
+router.beforeEach((to) => {
+  const authed = isLoggedIn()
+  if (!to.meta.public && !authed) return '/login'
+  if (to.path === '/login' && authed) return '/'
+  return true
+})
+
+export default router

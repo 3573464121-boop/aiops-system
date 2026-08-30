@@ -86,6 +86,13 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			created_at DATETIME NOT NULL,
 			INDEX idx_memories_scope_product (scope, product_id)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id VARCHAR(64) PRIMARY KEY,
+			username VARCHAR(64) NOT NULL UNIQUE,
+			password_hash VARCHAR(255) NOT NULL,
+			role VARCHAR(16) NOT NULL DEFAULT 'viewer',
+			created_at DATETIME NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, statement := range statements {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil {
@@ -254,6 +261,42 @@ func (m *MySQL) ListMemories() ([]domain.Memory, error) {
 func (m *MySQL) DeleteMemory(id string) error {
 	_, err := m.db.Exec(`DELETE FROM memories WHERE id = ?`, id)
 	return err
+}
+
+func (m *MySQL) CreateUser(v domain.User) error {
+	_, err := m.db.Exec(`INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`,
+		v.ID, v.Username, v.PasswordHash, v.Role, v.CreatedAt)
+	return err
+}
+func (m *MySQL) GetUserByUsername(username string) (domain.User, error) {
+	var v domain.User
+	err := m.db.QueryRow(`SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?`, username).
+		Scan(&v.ID, &v.Username, &v.PasswordHash, &v.Role, &v.CreatedAt)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return v, nil
+}
+func (m *MySQL) ListUsers() ([]domain.User, error) {
+	rows, err := m.db.Query(`SELECT id, username, password_hash, role, created_at FROM users ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.User, 0)
+	for rows.Next() {
+		var v domain.User
+		if err = rows.Scan(&v.ID, &v.Username, &v.PasswordHash, &v.Role, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+func (m *MySQL) CountUsers() (int, error) {
+	var n int
+	err := m.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
 }
 
 func (m *MySQL) Close() error { return m.db.Close() }

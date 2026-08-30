@@ -14,10 +14,11 @@ type Memory struct {
 	tasks    []domain.InspectionTask
 	reports  []domain.InspectionReport
 	memories []domain.Memory
+	users    []domain.User
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, users: []domain.User{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -137,6 +138,38 @@ func (m *Memory) DeleteMemory(id string) error {
 	}
 	m.memories = out
 	return nil
+}
+
+func (m *Memory) CreateUser(v domain.User) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.Username == v.Username {
+			return fmt.Errorf("用户名已存在: %s", v.Username)
+		}
+	}
+	m.users = append(m.users, v)
+	return nil
+}
+func (m *Memory) GetUserByUsername(username string) (domain.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, u := range m.users {
+		if u.Username == username {
+			return u, nil
+		}
+	}
+	return domain.User{}, fmt.Errorf("用户不存在: %s", username)
+}
+func (m *Memory) ListUsers() ([]domain.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]domain.User(nil), m.users...), nil
+}
+func (m *Memory) CountUsers() (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.users), nil
 }
 
 func (m *Memory) Close() error { return nil }

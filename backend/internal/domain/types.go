@@ -143,6 +143,23 @@ type MemoryExtractRequest struct {
 	Text      string `json:"text" binding:"required"`
 }
 
+// User 是系统登录用户。Role 目前分 admin（管理员，可管理配置）与 viewer（只读，可查看与诊断）。
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"-"` // 只存 bcrypt 哈希，绝不出现在任何响应里
+	Role         string    `json:"role"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+type LoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+type LoginResponse struct {
+	Token string `json:"token"`
+	User  User   `json:"user"`
+}
+
 // StreamEvent 是流式诊断过程中实时推送给前端的单条事件。
 type StreamEvent struct {
 	Type    string           `json:"type"`              // status | tool_call | tool_result | result | error | done

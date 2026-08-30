@@ -21,5 +21,10 @@ type Repository interface {
 	ListMemories() ([]domain.Memory, error)
 	DeleteMemory(id string) error
 
+	CreateUser(domain.User) error
+	GetUserByUsername(username string) (domain.User, error)
+	ListUsers() ([]domain.User, error)
+	CountUsers() (int, error)
+
 	Close() error
 }

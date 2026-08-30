@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"aiops-mvp/internal/app"
+	"aiops-mvp/internal/auth"
 	"aiops-mvp/internal/domain"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
-func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine {
+func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes ...string) *gin.Engine {
 	storageMode := "memory"
 	if len(storageModes) > 0 && storageModes[0] != "" {
 		storageMode = storageModes[0]
@@ -27,6 +28,64 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		c.JSON(200, gin.H{"status": "ok", "time": time.Now(), "knowledge_chunks": knowledgeCount, "storage": storageMode})
 	})
 	api := r.Group("/api/v1")
+
+	// 登录：公开接口，用户名 + 密码换取令牌。
+	api.POST("/auth/login", func(c *gin.Context) {
+		var req domain.LoginRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请填写用户名与密码"})
+			return
+		}
+		u, err := s.Authenticate(req.Username, req.Password)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		token, err := signer.Issue(u.ID, u.Username, u.Role, time.Now())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "签发令牌失败"})
+			return
+		}
+		c.JSON(200, domain.LoginResponse{Token: token, User: u})
+	})
+
+	// requireAdmin 用作管理类接口的附加中间件：仅 admin 角色放行。
+	requireAdmin := func(c *gin.Context) {
+		if role, _ := c.Get("role"); role != "admin" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "该操作需要管理员权限"})
+			return
+		}
+		c.Next()
+	}
+
+	// 以下所有接口都要求携带有效令牌。
+	api.Use(func(c *gin.Context) {
+		h := strings.TrimSpace(c.GetHeader("Authorization"))
+		token := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+			return
+		}
+		claims, err := signer.Verify(token, time.Now())
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		c.Set("uid", claims.UserID)
+		c.Set("username", claims.Username)
+		c.Set("role", claims.Role)
+		c.Next()
+	})
+
+	// 当前登录用户信息。
+	api.GET("/auth/me", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"id":       c.GetString("uid"),
+			"username": c.GetString("username"),
+			"role":     c.GetString("role"),
+		})
+	})
+
 	api.GET("/system/status", func(c *gin.Context) {
 		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "asset_provider": s.Tools.AssetProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
 	})
@@ -166,7 +225,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		c.JSON(200, gin.H{"items": v, "total": len(v)})
 	})
-	api.POST("/inspections", func(c *gin.Context) {
+	api.POST("/inspections", requireAdmin, func(c *gin.Context) {
 		var req domain.InspectionTaskRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -184,7 +243,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		c.JSON(http.StatusCreated, v)
 	})
-	api.POST("/inspections/:id/toggle", func(c *gin.Context) {
+	api.POST("/inspections/:id/toggle", requireAdmin, func(c *gin.Context) {
 		var body struct {
 			Enabled bool `json:"enabled"`
 		}
@@ -198,7 +257,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		c.JSON(200, gin.H{"status": "ok"})
 	})
-	api.POST("/inspections/:id/run", func(c *gin.Context) {
+	api.POST("/inspections/:id/run", requireAdmin, func(c *gin.Context) {
 		v, err := s.RunInspectionNow(c.Param("id"))
 		if err != nil {
 			c.JSON(404, gin.H{"error": err.Error()})
@@ -206,7 +265,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		c.JSON(200, v)
 	})
-	api.DELETE("/inspections/:id", func(c *gin.Context) {
+	api.DELETE("/inspections/:id", requireAdmin, func(c *gin.Context) {
 		if err := s.DeleteInspectionTask(c.Param("id")); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -230,7 +289,7 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		c.JSON(200, gin.H{"items": v, "total": len(v)})
 	})
-	api.POST("/memories", func(c *gin.Context) {
+	api.POST("/memories", requireAdmin, func(c *gin.Context) {
 		var req domain.MemoryRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -243,14 +302,14 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 		}
 		c.JSON(http.StatusCreated, v)
 	})
-	api.DELETE("/memories/:id", func(c *gin.Context) {
+	api.DELETE("/memories/:id", requireAdmin, func(c *gin.Context) {
 		if err := s.DeleteMemory(c.Param("id")); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(200, gin.H{"status": "ok"})
 	})
-	api.POST("/memories/extract", func(c *gin.Context) {
+	api.POST("/memories/extract", requireAdmin, func(c *gin.Context) {
 		var req domain.MemoryExtractRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -262,6 +321,31 @@ func New(s *app.Service, knowledgeCount int, storageModes ...string) *gin.Engine
 			return
 		}
 		c.JSON(200, gin.H{"draft": draft})
+	})
+	api.GET("/users", requireAdmin, func(c *gin.Context) {
+		v, err := s.ListUsers()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
+	})
+	api.POST("/users", requireAdmin, func(c *gin.Context) {
+		var req struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		u, err := s.CreateUser(req.Username, req.Password, req.Role)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, u)
 	})
 	api.GET("/audits", func(c *gin.Context) {
 		v, err := s.Audits()

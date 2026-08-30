@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
 import { PlusOutlined, SendOutlined, RobotOutlined, ExportOutlined, MenuFoldOutlined, MenuUnfoldOutlined, CheckCircleFilled } from '@ant-design/icons-vue'
-import { api, API } from '../api'
+import { api, API, authHeaders } from '../api'
 
 const productId = ref('payment')
 const model = ref('deepseek-chat')
@@ -51,9 +51,10 @@ async function send() {
   scrollToBottom()
   try {
     const resp = await fetch(`${API}/diagnoses/stream`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ product_id: productId.value, question: q, window_minutes: 30 })
     })
+    if (resp.status === 401) { location.hash = '#/login'; throw new Error('登录已过期，请重新登录') }
     if (!resp.ok || !resp.body) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || `请求失败（${resp.status}）`) }
     const reader = resp.body.getReader()
     const decoder = new TextDecoder()

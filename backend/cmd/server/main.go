@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aiops-mvp/internal/app"
+	"aiops-mvp/internal/auth"
 	"aiops-mvp/internal/embed"
 	"aiops-mvp/internal/httpapi"
 	"aiops-mvp/internal/knowledge"
@@ -84,13 +85,27 @@ func main() {
 	llmClient := &llm.Client{BaseURL: os.Getenv("LLM_BASE_URL"), APIKey: os.Getenv("LLM_API_KEY"), Model: os.Getenv("LLM_MODEL")}
 	service := app.New(toolService, llmClient, repo)
 
+	// 认证：HMAC 令牌签发器 + 首次启动时播种管理员账号。
+	secret := strings.TrimSpace(os.Getenv("AUTH_SECRET"))
+	if secret == "" {
+		secret = "aiops-dev-secret-change-me"
+		log.Printf("警告: 未配置 AUTH_SECRET，正在使用内置开发密钥，生产环境务必在 .env 中设置")
+	}
+	signer := auth.NewSigner(secret, 12*time.Hour)
+	adminPass := env("AUTH_ADMIN_PASSWORD", "admin123")
+	if created, err := service.EnsureSeedAdmin("admin", adminPass); err != nil {
+		log.Printf("播种管理员账号失败: %v", err)
+	} else if created {
+		log.Printf("已创建初始管理员账号: admin / %s（首次登录后请尽快修改）", adminPass)
+	}
+
 	// 主动巡检调度器：进程内定时跑到期的巡检任务。
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()
 	service.StartInspectionScheduler(schedCtx)
 	log.Printf("主动巡检调度器已启动")
 
-	router := httpapi.New(service, indexSize(index), storageMode)
+	router := httpapi.New(service, signer, indexSize(index), storageMode)
 	addr := env("APP_ADDR", ":8080")
 	log.Printf("AIOps API listening on %s (storage=%s)", addr, storageMode)
 	if err = router.Run(addr); err != nil {
