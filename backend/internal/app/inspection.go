@@ -18,7 +18,7 @@ const (
 )
 
 // CreateInspectionTask 新建一条巡检任务。周期过小会被抬到下限；问题留空时给一个通用健康巡检提示。
-func (s *Service) CreateInspectionTask(req domain.InspectionTaskRequest) (domain.InspectionTask, error) {
+func (s *Service) CreateInspectionTask(ctx context.Context, req domain.InspectionTaskRequest) (domain.InspectionTask, error) {
 	q := strings.TrimSpace(req.Question)
 	if q == "" {
 		q = "对该产品做一次例行巡检：检查当前是否存在活跃告警或异常，如有请给出根因与处置建议。"
@@ -39,8 +39,10 @@ func (s *Service) CreateInspectionTask(req domain.InspectionTaskRequest) (domain
 		CreatedAt:   time.Now(),
 	}
 	if err := s.Repo.CreateInspectionTask(t); err != nil {
+		s.addAudit(ctx, "create_inspection_task", t.ProductID, "error", 0)
 		return domain.InspectionTask{}, err
 	}
+	s.addAudit(ctx, "create_inspection_task", t.ProductID, "success", 0)
 	return t, nil
 }
 
@@ -49,17 +51,31 @@ func (s *Service) ListInspectionTasks() ([]domain.InspectionTask, error) {
 }
 
 // ToggleInspectionTask 开关一条巡检任务。
-func (s *Service) ToggleInspectionTask(id string, enabled bool) error {
+func (s *Service) ToggleInspectionTask(ctx context.Context, id string, enabled bool) error {
 	t, err := s.Repo.GetInspectionTask(id)
 	if err != nil {
 		return err
 	}
 	t.Enabled = enabled
-	return s.Repo.UpdateInspectionTask(t)
+	if err := s.Repo.UpdateInspectionTask(t); err != nil {
+		s.addAudit(ctx, "toggle_inspection_task", t.ProductID, "error", 0)
+		return err
+	}
+	s.addAudit(ctx, "toggle_inspection_task", t.ProductID, "success", 0)
+	return nil
 }
 
-func (s *Service) DeleteInspectionTask(id string) error {
-	return s.Repo.DeleteInspectionTask(id)
+func (s *Service) DeleteInspectionTask(ctx context.Context, id string) error {
+	t, err := s.Repo.GetInspectionTask(id)
+	if err != nil {
+		return err
+	}
+	if err := s.Repo.DeleteInspectionTask(id); err != nil {
+		s.addAudit(ctx, "delete_inspection_task", t.ProductID, "error", 0)
+		return err
+	}
+	s.addAudit(ctx, "delete_inspection_task", t.ProductID, "success", 0)
+	return nil
 }
 
 func (s *Service) ListInspectionReports(taskID string, limit int) ([]domain.InspectionReport, error) {
@@ -67,12 +83,13 @@ func (s *Service) ListInspectionReports(taskID string, limit int) ([]domain.Insp
 }
 
 // RunInspectionNow 手动立即触发一次巡检并返回生成的报告。
-func (s *Service) RunInspectionNow(id string) (domain.InspectionReport, error) {
+func (s *Service) RunInspectionNow(ctx context.Context, id string) (domain.InspectionReport, error) {
 	t, err := s.Repo.GetInspectionTask(id)
 	if err != nil {
 		return domain.InspectionReport{}, err
 	}
-	return s.runInspection(context.Background(), t), nil
+	s.addAudit(ctx, "manual_run_inspection", t.ProductID, "success", 0)
+	return s.runInspection(ctx, t), nil
 }
 
 // runInspection 跑一次诊断，沉淀成巡检报告，并回写任务的上次运行状态。整体串行执行。
@@ -106,7 +123,7 @@ func (s *Service) runInspection(ctx context.Context, t domain.InspectionTask) do
 	if err := s.Repo.UpdateInspectionTask(t); err != nil {
 		log.Printf("巡检任务状态回写失败 task=%s: %v", t.ID, err)
 	}
-	s.addAudit("inspection", t.ProductID, "success", report.DurationMS)
+	s.addAudit(ctx, "inspection", t.ProductID, "success", report.DurationMS)
 	return report
 }
 
@@ -159,6 +176,6 @@ func (s *Service) scanAndRun(ctx context.Context) {
 			return
 		default:
 		}
-		s.runInspection(ctx, t)
+		s.runInspection(WithActor(ctx, "", "system", "system"), t)
 	}
 }

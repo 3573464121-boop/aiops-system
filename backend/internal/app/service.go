@@ -46,7 +46,7 @@ func (s *Service) DiagnoseStream(ctx context.Context, req domain.DiagnosisReques
 		return s.diagnoseAgent(ctx, req, emit)
 	}
 	emit(domain.StreamEvent{Type: "status", Message: "未配置大模型，使用本地启发式诊断"})
-	return s.diagnoseHeuristic(req)
+	return s.diagnoseHeuristic(ctx, req)
 }
 
 // diagnoseAgent 让模型自主决定调用哪些只读工具（最多 maxToolRounds 轮）收集证据，再产出结构化诊断。
@@ -75,7 +75,7 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 		if err != nil {
 			emit(domain.StreamEvent{Type: "status", Message: "模型调用失败，降级为本地启发式诊断"})
 			trace = append(trace, domain.ToolTrace{Tool: "llm_chat", Status: "error", DurationMS: time.Since(started).Milliseconds(), Summary: err.Error()})
-			return s.mergeHeuristic(req, trace)
+			return s.mergeHeuristic(ctx, req, trace)
 		}
 		if len(msg.ToolCalls) == 0 {
 			finalContent = strings.TrimSpace(msg.Content)
@@ -126,7 +126,7 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 		result.Trace = append(result.Trace, domain.ToolTrace{Tool: "llm_synthesis", Status: "fallback", Summary: err.Error()})
 	}
 
-	s.addAudit("diagnose", req.ProductID, "success", time.Since(started).Milliseconds())
+	s.addAudit(ctx, "diagnose", req.ProductID, "success", time.Since(started).Milliseconds())
 	return result
 }
 
@@ -198,12 +198,12 @@ func (s *Service) runToolCall(tc llm.ToolCall) (out, summary, status string, ale
 }
 
 // diagnoseHeuristic 无 LLM 时的本地兜底。
-func (s *Service) diagnoseHeuristic(req domain.DiagnosisRequest) domain.DiagnosisResult {
-	return s.mergeHeuristic(req, make([]domain.ToolTrace, 0, 4))
+func (s *Service) diagnoseHeuristic(ctx context.Context, req domain.DiagnosisRequest) domain.DiagnosisResult {
+	return s.mergeHeuristic(ctx, req, make([]domain.ToolTrace, 0, 4))
 }
 
 // mergeHeuristic 在已有 trace 基础上追加固定顺序的证据收集与保守判断（Agent 失败时复用）。
-func (s *Service) mergeHeuristic(req domain.DiagnosisRequest, trace []domain.ToolTrace) domain.DiagnosisResult {
+func (s *Service) mergeHeuristic(ctx context.Context, req domain.DiagnosisRequest, trace []domain.ToolTrace) domain.DiagnosisResult {
 	started := time.Now()
 	t := time.Now()
 	alerts, alertErr := s.Tools.Alerts(req.ProductID)
@@ -244,7 +244,7 @@ func (s *Service) mergeHeuristic(req domain.DiagnosisRequest, trace []domain.Too
 		result.Hypotheses = []domain.Hypothesis{{Rank: 1, Cause: "上游依赖超时", Confidence: .72}, {Rank: 2, Cause: "连接池容量接近上限", Confidence: .61}}
 		result.Actions = []domain.Action{{Name: "核对上游服务延迟与错误率", Risk: "low"}, {Name: "检查连接池使用率和等待时间", Risk: "low"}, {Name: "回滚最近一次发布", Risk: "high", RequiresApproval: true}}
 	}
-	s.addAudit("diagnose", req.ProductID, "success", time.Since(started).Milliseconds())
+	s.addAudit(ctx, "diagnose", req.ProductID, "success", time.Since(started).Milliseconds())
 	return result
 }
 
@@ -436,19 +436,30 @@ func nonnullActions(v []domain.Action) []domain.Action {
 
 // ---------- 工单与审计 ----------
 
-func (s *Service) CreateIssue(req domain.IssueRequest) (domain.Issue, error) {
+func (s *Service) CreateIssue(ctx context.Context, req domain.IssueRequest) (domain.Issue, error) {
 	i := domain.Issue{ID: fmt.Sprintf("ISS-%d", time.Now().UnixNano()), ProductID: req.ProductID, Title: req.Title, Diagnosis: req.Diagnosis, Status: "open", CreatedAt: time.Now()}
 	if err := s.Repo.CreateIssue(i); err != nil {
-		s.addAudit("create_issue", req.ProductID, "error", 0)
+		s.addAudit(ctx, "create_issue", req.ProductID, "error", 0)
 		return domain.Issue{}, err
 	}
-	s.addAudit("create_issue", req.ProductID, "success", 0)
+	s.addAudit(ctx, "create_issue", req.ProductID, "success", 0)
 	return i, nil
 }
 
 func (s *Service) Issues() ([]domain.Issue, error)      { return s.Repo.ListIssues() }
 func (s *Service) Audits() ([]domain.AuditEvent, error) { return s.Repo.ListAudits(100) }
 
-func (s *Service) addAudit(action, pid, status string, d int64) {
-	_ = s.Repo.AddAudit(domain.AuditEvent{ID: fmt.Sprintf("AUD-%d", time.Now().UnixNano()), Action: action, ProductID: pid, Status: status, DurationMS: d, CreatedAt: time.Now()})
+func (s *Service) addAudit(ctx context.Context, action, pid, status string, d int64) {
+	userID, username, role := actorFromContext(ctx)
+	_ = s.Repo.AddAudit(domain.AuditEvent{
+		ID:         fmt.Sprintf("AUD-%d", time.Now().UnixNano()),
+		Action:     action,
+		ProductID:  pid,
+		UserID:     userID,
+		Username:   username,
+		Role:       role,
+		Status:     status,
+		DurationMS: d,
+		CreatedAt:  time.Now(),
+	})
 }

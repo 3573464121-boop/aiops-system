@@ -23,7 +23,7 @@ func TestDiagnoseHandlesEmptyEvidence(t *testing.T) {
 }
 func TestCreateIssueAndAudit(t *testing.T) {
 	s := New(tools.NewService(nil, nil, nil), nil)
-	i, err := s.CreateIssue(domain.IssueRequest{ProductID: "payment", Title: "test", Diagnosis: "d"})
+	i, err := s.CreateIssue(context.Background(), domain.IssueRequest{ProductID: "payment", Title: "test", Diagnosis: "d"})
 	if err != nil {
 		t.Fatal(err)
 	}

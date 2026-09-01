@@ -14,7 +14,7 @@ import (
 const maxRecall = 5 // 每次诊断自动召回的记忆条数上限
 
 // CreateMemory 新建一条长期记忆。scope 默认 global，kind 默认 fact。
-func (s *Service) CreateMemory(req domain.MemoryRequest) (domain.Memory, error) {
+func (s *Service) CreateMemory(ctx context.Context, req domain.MemoryRequest) (domain.Memory, error) {
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
 		return domain.Memory{}, fmt.Errorf("记忆内容不能为空")
@@ -45,13 +45,33 @@ func (s *Service) CreateMemory(req domain.MemoryRequest) (domain.Memory, error) 
 		CreatedAt: time.Now(),
 	}
 	if err := s.Repo.CreateMemory(m); err != nil {
+		s.addAudit(ctx, "create_memory", pid, "error", 0)
 		return domain.Memory{}, err
 	}
+	s.addAudit(ctx, "create_memory", pid, "success", 0)
 	return m, nil
 }
 
 func (s *Service) ListMemories() ([]domain.Memory, error) { return s.Repo.ListMemories() }
-func (s *Service) DeleteMemory(id string) error           { return s.Repo.DeleteMemory(id) }
+func (s *Service) DeleteMemory(ctx context.Context, id string) error {
+	ms, err := s.Repo.ListMemories()
+	if err != nil {
+		return err
+	}
+	productID := ""
+	for _, m := range ms {
+		if m.ID == id {
+			productID = m.ProductID
+			break
+		}
+	}
+	if err := s.Repo.DeleteMemory(id); err != nil {
+		s.addAudit(ctx, "delete_memory", productID, "error", 0)
+		return err
+	}
+	s.addAudit(ctx, "delete_memory", productID, "success", 0)
+	return nil
+}
 
 // recallMemories 召回与当前诊断相关的记忆：候选=全局记忆 + 该产品记忆，按与问题的关键词重合度打分，取前 limit 条。
 func (s *Service) recallMemories(productID, query string, limit int) []domain.Memory {

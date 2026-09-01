@@ -85,6 +85,9 @@ type AuditEvent struct {
 	ID         string    `json:"id"`
 	Action     string    `json:"action"`
 	ProductID  string    `json:"product_id"`
+	UserID     string    `json:"user_id"`
+	Username   string    `json:"username"`
+	Role       string    `json:"role"`
 	Status     string    `json:"status"`
 	DurationMS int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`

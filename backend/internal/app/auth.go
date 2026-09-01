@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ func (s *Service) Authenticate(username, password string) (domain.User, error) {
 }
 
 // CreateUser 新建一个用户（密码用 bcrypt 存哈希）。role 非 admin 一律按 viewer。
-func (s *Service) CreateUser(username, password, role string) (domain.User, error) {
+func (s *Service) CreateUser(ctx context.Context, username, password, role string) (domain.User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || strings.TrimSpace(password) == "" {
 		return domain.User{}, fmt.Errorf("用户名与密码不能为空")
@@ -44,8 +45,10 @@ func (s *Service) CreateUser(username, password, role string) (domain.User, erro
 		CreatedAt:    time.Now(),
 	}
 	if err := s.Repo.CreateUser(u); err != nil {
+		s.addAudit(ctx, "create_user", "", "error", 0)
 		return domain.User{}, err
 	}
+	s.addAudit(ctx, "create_user", "", "success", 0)
 	return u, nil
 }
 
@@ -59,7 +62,7 @@ func (s *Service) EnsureSeedAdmin(username, password string) (bool, error) {
 	if n > 0 {
 		return false, nil
 	}
-	if _, err := s.CreateUser(username, password, "admin"); err != nil {
+	if _, err := s.CreateUser(WithActor(context.Background(), "", "system", "system"), username, password, "admin"); err != nil {
 		return false, err
 	}
 	return true, nil

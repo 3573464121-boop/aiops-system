@@ -74,6 +74,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		c.Set("uid", claims.UserID)
 		c.Set("username", claims.Username)
 		c.Set("role", claims.Role)
+		c.Request = c.Request.WithContext(app.WithActor(c.Request.Context(), claims.UserID, claims.Username, claims.Role))
 		c.Next()
 	})
 
@@ -210,7 +211,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			c.JSON(400, gin.H{"error": "product_id, title and diagnosis cannot be blank"})
 			return
 		}
-		v, err := s.CreateIssue(req)
+		v, err := s.CreateIssue(c.Request.Context(), req)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -236,7 +237,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			c.JSON(400, gin.H{"error": "product_id cannot be blank"})
 			return
 		}
-		v, err := s.CreateInspectionTask(req)
+		v, err := s.CreateInspectionTask(c.Request.Context(), req)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -251,14 +252,14 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if err := s.ToggleInspectionTask(c.Param("id"), body.Enabled); err != nil {
+		if err := s.ToggleInspectionTask(c.Request.Context(), c.Param("id"), body.Enabled); err != nil {
 			c.JSON(404, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 	api.POST("/inspections/:id/run", requireAdmin, func(c *gin.Context) {
-		v, err := s.RunInspectionNow(c.Param("id"))
+		v, err := s.RunInspectionNow(c.Request.Context(), c.Param("id"))
 		if err != nil {
 			c.JSON(404, gin.H{"error": err.Error()})
 			return
@@ -266,7 +267,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		c.JSON(200, v)
 	})
 	api.DELETE("/inspections/:id", requireAdmin, func(c *gin.Context) {
-		if err := s.DeleteInspectionTask(c.Param("id")); err != nil {
+		if err := s.DeleteInspectionTask(c.Request.Context(), c.Param("id")); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
@@ -295,7 +296,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		v, err := s.CreateMemory(req)
+		v, err := s.CreateMemory(c.Request.Context(), req)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -303,7 +304,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		c.JSON(http.StatusCreated, v)
 	})
 	api.DELETE("/memories/:id", requireAdmin, func(c *gin.Context) {
-		if err := s.DeleteMemory(c.Param("id")); err != nil {
+		if err := s.DeleteMemory(c.Request.Context(), c.Param("id")); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
@@ -340,7 +341,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		u, err := s.CreateUser(req.Username, req.Password, req.Role)
+		u, err := s.CreateUser(c.Request.Context(), req.Username, req.Password, req.Role)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return

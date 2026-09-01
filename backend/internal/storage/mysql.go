@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"aiops-mvp/internal/domain"
@@ -49,6 +50,9 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			id VARCHAR(64) PRIMARY KEY,
 			action VARCHAR(64) NOT NULL,
 			product_id VARCHAR(128) NOT NULL,
+			user_id VARCHAR(64) NOT NULL DEFAULT '',
+			username VARCHAR(64) NOT NULL DEFAULT '',
+			role VARCHAR(16) NOT NULL DEFAULT '',
 			status VARCHAR(32) NOT NULL,
 			duration_ms BIGINT NOT NULL,
 			created_at DATETIME NOT NULL,
@@ -99,6 +103,15 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			return fmt.Errorf("鎵ц鏁版嵁搴撹縼绉? %w", err)
 		}
 	}
+	for _, statement := range []string{
+		`ALTER TABLE audit_events ADD COLUMN user_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_events ADD COLUMN username VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_events ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT ''`,
+	} {
+		if _, err := m.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return fmt.Errorf("audit_events alter migration failed: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -123,14 +136,15 @@ func (m *MySQL) ListIssues() ([]domain.Issue, error) {
 	return out, rows.Err()
 }
 func (m *MySQL) AddAudit(v domain.AuditEvent) error {
-	_, err := m.db.Exec(`INSERT INTO audit_events (id, action, product_id, status, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)`, v.ID, v.Action, v.ProductID, v.Status, v.DurationMS, v.CreatedAt)
+	_, err := m.db.Exec(`INSERT INTO audit_events (id, action, product_id, user_id, username, role, status, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.Action, v.ProductID, v.UserID, v.Username, v.Role, v.Status, v.DurationMS, v.CreatedAt)
 	return err
 }
 func (m *MySQL) ListAudits(limit int) ([]domain.AuditEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := m.db.Query(`SELECT id, action, product_id, status, duration_ms, created_at FROM audit_events ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := m.db.Query(`SELECT id, action, product_id, user_id, username, role, status, duration_ms, created_at FROM audit_events ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +152,7 @@ func (m *MySQL) ListAudits(limit int) ([]domain.AuditEvent, error) {
 	out := make([]domain.AuditEvent, 0)
 	for rows.Next() {
 		var v domain.AuditEvent
-		if err = rows.Scan(&v.ID, &v.Action, &v.ProductID, &v.Status, &v.DurationMS, &v.CreatedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.Action, &v.ProductID, &v.UserID, &v.Username, &v.Role, &v.Status, &v.DurationMS, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
