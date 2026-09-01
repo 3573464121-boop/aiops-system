@@ -1,6 +1,11 @@
 package tools
 
 import (
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
 	"aiops-mvp/internal/domain"
 	"aiops-mvp/internal/knowledge"
 )
@@ -82,4 +87,82 @@ func (s *Service) AssetProviderName() string {
 		return "demo"
 	}
 	return s.AssetsProvider.Name()
+}
+
+func safeEndpoint(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func (s *Service) DataSources() []domain.DataSourceStatus {
+	alert := domain.DataSourceStatus{Name: "alerts", Kind: "alert", Mode: s.AlertProviderName(), Status: "demo", Message: "使用内置演示告警"}
+	switch p := s.AlertsProvider.(type) {
+	case N9EAlertProvider:
+		alert.Configured, alert.Endpoint, alert.Status, alert.Message = true, safeEndpoint(p.BaseURL), "unknown", "已配置，等待连接测试"
+	case *N9EAlertProvider:
+		alert.Configured, alert.Endpoint, alert.Status, alert.Message = true, safeEndpoint(p.BaseURL), "unknown", "已配置，等待连接测试"
+	}
+	logs := domain.DataSourceStatus{Name: "logs", Kind: "log", Mode: s.LogProviderName(), Status: "demo", Message: "使用内置演示日志"}
+	switch p := s.LogsProvider.(type) {
+	case LokiLogProvider:
+		logs.Configured, logs.Endpoint, logs.Status, logs.Message = true, safeEndpoint(p.BaseURL), "unknown", "已配置，等待连接测试"
+	case *LokiLogProvider:
+		logs.Configured, logs.Endpoint, logs.Status, logs.Message = true, safeEndpoint(p.BaseURL), "unknown", "已配置，等待连接测试"
+	}
+	knowledge := domain.DataSourceStatus{Name: "knowledge", Kind: "knowledge", Mode: s.KnowledgeMode(), Configured: s.Knowledge != nil, Status: "ready", Message: "知识索引可用"}
+	assets := domain.DataSourceStatus{Name: "assets", Kind: "asset", Mode: s.AssetProviderName(), Configured: s.AssetsProvider != nil, Status: "demo", Message: "使用内置演示资产"}
+	if s.AssetsProvider != nil && s.AssetsProvider.Name() != "demo" {
+		assets.Status, assets.Message = "unknown", "已配置，等待连接测试"
+	}
+	return []domain.DataSourceStatus{alert, logs, knowledge, assets}
+}
+
+func (s *Service) TestDataSource(name string) domain.DataSourceStatus {
+	name = strings.ToLower(strings.TrimSpace(name))
+	started := time.Now()
+	var status domain.DataSourceStatus
+	var count int
+	var err error
+	switch name {
+	case "alerts":
+		status = s.DataSources()[0]
+		if status.Status == "demo" {
+			return status
+		}
+		var items []domain.Alert
+		items, err = s.Alerts("")
+		count = len(items)
+	case "logs":
+		status = s.DataSources()[1]
+		if status.Status == "demo" {
+			return status
+		}
+		var items []domain.Evidence
+		items, err = s.Logs("__aiops_healthcheck__", "")
+		count = len(items)
+	case "knowledge":
+		status = s.DataSources()[2]
+		count = len(s.SearchKnowledge("故障", 1))
+	case "assets":
+		status = s.DataSources()[3]
+		if status.Status == "demo" {
+			return status
+		}
+		var items []domain.Asset
+		items, err = s.Assets("")
+		count = len(items)
+	default:
+		return domain.DataSourceStatus{Name: name, Status: "error", Message: "未知数据源"}
+	}
+	status.LatencyMS = time.Since(started).Milliseconds()
+	if err != nil {
+		status.Status, status.Message = "error", err.Error()
+		return status
+	}
+	status.Status = "ready"
+	status.Message = fmt.Sprintf("连接正常，查询返回 %d 条记录", count)
+	return status
 }

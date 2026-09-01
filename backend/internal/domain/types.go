@@ -55,6 +55,44 @@ type Action struct {
 	RequiresApproval bool   `json:"requires_approval"`
 }
 
+type ApprovalRequest struct {
+	ProductID string `json:"product_id" binding:"required"`
+	Action    string `json:"action" binding:"required"`
+	Risk      string `json:"risk"`
+	Reason    string `json:"reason" binding:"required"`
+	Source    string `json:"source"`
+}
+
+type ApprovalDecisionRequest struct {
+	Decision string `json:"decision" binding:"required"` // approved | rejected
+	Comment  string `json:"comment"`
+}
+
+type ApprovalExecutionRequest struct {
+	Note string `json:"note"`
+}
+
+type Approval struct {
+	ID            string    `json:"id"`
+	ProductID     string    `json:"product_id"`
+	Action        string    `json:"action"`
+	Risk          string    `json:"risk"`
+	Reason        string    `json:"reason"`
+	Source        string    `json:"source"`
+	Status        string    `json:"status"` // pending | approved | rejected | executed | cancelled
+	RequesterID   string    `json:"requester_id"`
+	RequesterName string    `json:"requester_name"`
+	ReviewerID    string    `json:"reviewer_id"`
+	ReviewerName  string    `json:"reviewer_name"`
+	ReviewComment string    `json:"review_comment"`
+	ExecutorID    string    `json:"executor_id"`
+	ExecutorName  string    `json:"executor_name"`
+	ExecutionNote string    `json:"execution_note"`
+	CreatedAt     time.Time `json:"created_at"`
+	ReviewedAt    time.Time `json:"reviewed_at"`
+	ExecutedAt    time.Time `json:"executed_at"`
+}
+
 type DiagnosisResult struct {
 	Question   string       `json:"question"`
 	ProductID  string       `json:"product_id"`
@@ -66,6 +104,102 @@ type DiagnosisResult struct {
 	Alerts     []Alert      `json:"alerts"`
 	Trace      []ToolTrace  `json:"trace"`
 	Mode       string       `json:"mode"`
+}
+
+type DataSourceStatus struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	Mode       string `json:"mode"`
+	Configured bool   `json:"configured"`
+	Endpoint   string `json:"endpoint"`
+	Status     string `json:"status"` // ready | demo | unknown | error
+	Message    string `json:"message"`
+	LatencyMS  int64  `json:"latency_ms"`
+}
+
+type DiagnosisRun struct {
+	ID              string    `json:"id"`
+	ProductID       string    `json:"product_id"`
+	Question        string    `json:"question"`
+	Mode            string    `json:"mode"`
+	Model           string    `json:"model"`
+	Summary         string    `json:"summary"`
+	Confidence      float64   `json:"confidence"`
+	EvidenceCount   int       `json:"evidence_count"`
+	AlertCount      int       `json:"alert_count"`
+	ToolCallCount   int       `json:"tool_call_count"`
+	FailedToolCount int       `json:"failed_tool_count"`
+	KnowledgeHit    bool      `json:"knowledge_hit"`
+	MemoryHit       bool      `json:"memory_hit"`
+	AssetHit        bool      `json:"asset_hit"`
+	DurationMS      int64     `json:"duration_ms"`
+	AlertProvider   string    `json:"alert_provider"`
+	LogProvider     string    `json:"log_provider"`
+	KnowledgeMode   string    `json:"knowledge_mode"`
+	EvidenceSources []string  `json:"evidence_sources"`
+	Tools           []string  `json:"tools"`
+	Username        string    `json:"username"`
+	Included        bool      `json:"included"`
+	GoldCause       string    `json:"gold_cause"`
+	ReviewerNote    string    `json:"reviewer_note"`
+	ReviewedBy      string    `json:"reviewed_by"`
+	CreatedAt       time.Time `json:"created_at"`
+	ReviewedAt      time.Time `json:"reviewed_at"`
+}
+
+type DiagnosisRunReviewRequest struct {
+	Included  bool   `json:"included"`
+	GoldCause string `json:"gold_cause"`
+	Note      string `json:"note"`
+}
+
+type FaultCaseRequest struct {
+	Name       string     `json:"name" binding:"required"`
+	ProductID  string     `json:"product_id" binding:"required"`
+	Question   string     `json:"question" binding:"required"`
+	GoldCause  string     `json:"gold_cause" binding:"required"`
+	Source     string     `json:"source"`
+	Version    string     `json:"version"`
+	Tags       []string   `json:"tags"`
+	Alerts     []Alert    `json:"alerts"`
+	Logs       []Evidence `json:"logs"`
+	Assets     []Asset    `json:"assets"`
+}
+
+type FaultCase struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	ProductID  string     `json:"product_id"`
+	Question   string     `json:"question"`
+	GoldCause  string     `json:"gold_cause"`
+	Source     string     `json:"source"`  // real | synthetic | imported
+	Version    string     `json:"version"`
+	Tags       []string   `json:"tags"`
+	Alerts     []Alert    `json:"alerts"`
+	Logs       []Evidence `json:"logs"`
+	Assets     []Asset    `json:"assets"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+type ReplayRequest struct {
+	Configs []string `json:"configs"` // full | bm25 | no-agent
+}
+
+type ReplayResult struct {
+	ID             string          `json:"id"`
+	CaseID         string          `json:"case_id"`
+	Config         string          `json:"config"`
+	Model          string          `json:"model"`
+	Diagnosis      DiagnosisResult `json:"diagnosis"`
+	CauseCorrect   bool            `json:"cause_correct"`
+	Faithfulness   float64         `json:"faithfulness"`
+	Hallucination  bool            `json:"hallucination"`
+	Judged         bool            `json:"judged"`
+	DurationMS     int64           `json:"duration_ms"`
+	ToolFailures   int             `json:"tool_failures"`
+	CreatedBy      string          `json:"created_by"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 type IssueRequest struct {

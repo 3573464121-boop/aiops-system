@@ -9,7 +9,10 @@ import Assets from './views/Assets.vue'
 import Inspection from './views/Inspection.vue'
 import Memory from './views/Memory.vue'
 import Login from './views/Login.vue'
-import ComingSoon from './views/ComingSoon.vue'
+import Workflow from './views/Workflow.vue'
+import DataSources from './views/DataSources.vue'
+import Experiments from './views/Experiments.vue'
+import Replay from './views/Replay.vue'
 import { isLoggedIn } from './api'
 
 const routes = [
@@ -23,7 +26,10 @@ const routes = [
   { path: '/memory', component: Memory },
   { path: '/inspection', component: Inspection },
   { path: '/assets', component: Assets },
-  { path: '/workflow', component: ComingSoon, props: { title: '工作流', desc: '可视化编排诊断与处置流程、规则路由与规则演化。' } },
+  { path: '/workflow', component: Workflow },
+  { path: '/data-sources', component: DataSources },
+  { path: '/experiments', component: Experiments },
+  { path: '/replay', component: Replay },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

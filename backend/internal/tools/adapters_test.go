@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"aiops-mvp/internal/domain"
 )
 
 func TestN9EAlertProviderMapping(t *testing.T) {
@@ -59,5 +61,40 @@ func TestLokiLogProviderMapping(t *testing.T) {
 	}
 	if evs[0].Type != "log" || evs[0].Title != "payment-api" || evs[0].Content == "" {
 		t.Fatalf("unexpected loki mapping: %+v", evs[0])
+	}
+}
+
+func TestDataSourceStatusAndConnectionTest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"dat":{"list":[]}}`)
+	}))
+	defer srv.Close()
+	s := NewService(nil, N9EAlertProvider{BaseURL: srv.URL}, DemoLogProvider{})
+	items := s.DataSources()
+	if len(items) != 4 || !items[0].Configured || items[0].Endpoint != srv.URL {
+		t.Fatalf("unexpected data source status: %+v", items)
+	}
+	result := s.TestDataSource("alerts")
+	if result.Status != "ready" || result.LatencyMS < 0 {
+		t.Fatalf("connection test failed: %+v", result)
+	}
+}
+
+func TestReplayProvidersUseCapturedData(t *testing.T) {
+	alerts := ReplayAlertProvider{Items: []domain.Alert{{ID: "A-1", ProductID: "payment"}, {ID: "A-2", ProductID: "order"}}}
+	gotAlerts, err := alerts.Alerts("payment")
+	if err != nil || len(gotAlerts) != 1 || gotAlerts[0].ID != "A-1" {
+		t.Fatalf("unexpected replay alerts: %+v err=%v", gotAlerts, err)
+	}
+	logs := ReplayLogProvider{Items: []domain.Evidence{{Title: "payment-api", Content: "connection pool timeout", Source: "case/log/1"}}}
+	gotLogs, err := logs.Search("payment", "unmatched query")
+	if err != nil || len(gotLogs) != 1 || gotLogs[0].Source != "case/log/1" {
+		t.Fatalf("replay logs must deterministically fall back to captured data: %+v err=%v", gotLogs, err)
+	}
+	assets := ReplayAssetProvider{Items: []domain.Asset{{ID: "S-1", ProductID: "payment", IP: "10.0.0.1"}}}
+	gotAssets, err := assets.LookupIP("10.0.0.1")
+	if err != nil || len(gotAssets) != 1 || gotAssets[0].ID != "S-1" {
+		t.Fatalf("unexpected replay assets: %+v err=%v", gotAssets, err)
 	}
 }

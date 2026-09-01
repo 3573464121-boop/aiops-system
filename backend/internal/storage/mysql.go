@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -96,6 +97,89 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			password_hash VARCHAR(255) NOT NULL,
 			role VARCHAR(16) NOT NULL DEFAULT 'viewer',
 			created_at DATETIME NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS approvals (
+			id VARCHAR(64) PRIMARY KEY,
+			product_id VARCHAR(128) NOT NULL,
+			action_name VARCHAR(512) NOT NULL,
+			risk VARCHAR(16) NOT NULL,
+			reason TEXT NOT NULL,
+			source VARCHAR(32) NOT NULL DEFAULT 'manual',
+			status VARCHAR(16) NOT NULL,
+			requester_id VARCHAR(64) NOT NULL DEFAULT '',
+			requester_name VARCHAR(64) NOT NULL DEFAULT '',
+			reviewer_id VARCHAR(64) NOT NULL DEFAULT '',
+			reviewer_name VARCHAR(64) NOT NULL DEFAULT '',
+			review_comment VARCHAR(512) NOT NULL DEFAULT '',
+			executor_id VARCHAR(64) NOT NULL DEFAULT '',
+			executor_name VARCHAR(64) NOT NULL DEFAULT '',
+			execution_note VARCHAR(512) NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			reviewed_at DATETIME NULL,
+			executed_at DATETIME NULL,
+			INDEX idx_approvals_status_created (status, created_at),
+			INDEX idx_approvals_product_created (product_id, created_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS diagnosis_runs (
+			id VARCHAR(64) PRIMARY KEY,
+			product_id VARCHAR(128) NOT NULL,
+			question TEXT NOT NULL,
+			mode VARCHAR(32) NOT NULL,
+			model VARCHAR(128) NOT NULL DEFAULT '',
+			summary TEXT NOT NULL,
+			confidence DOUBLE NOT NULL,
+			evidence_count INT NOT NULL,
+			alert_count INT NOT NULL,
+			tool_call_count INT NOT NULL,
+			failed_tool_count INT NOT NULL,
+			knowledge_hit TINYINT(1) NOT NULL,
+			memory_hit TINYINT(1) NOT NULL,
+			asset_hit TINYINT(1) NOT NULL,
+			duration_ms BIGINT NOT NULL,
+			alert_provider VARCHAR(64) NOT NULL DEFAULT '',
+			log_provider VARCHAR(64) NOT NULL DEFAULT '',
+			knowledge_mode VARCHAR(64) NOT NULL DEFAULT '',
+			evidence_sources TEXT NOT NULL,
+			tools TEXT NOT NULL,
+			username VARCHAR(64) NOT NULL DEFAULT '',
+			included TINYINT(1) NOT NULL DEFAULT 0,
+			gold_cause TEXT NOT NULL,
+			reviewer_note TEXT NOT NULL,
+			reviewed_by VARCHAR(64) NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			reviewed_at DATETIME NULL,
+			INDEX idx_runs_created (created_at),
+			INDEX idx_runs_included_created (included, created_at),
+			INDEX idx_runs_product_created (product_id, created_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS fault_cases (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			product_id VARCHAR(128) NOT NULL,
+			version VARCHAR(32) NOT NULL,
+			source VARCHAR(32) NOT NULL,
+			payload LONGTEXT NOT NULL,
+			created_by VARCHAR(64) NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			INDEX idx_fault_cases_created (created_at),
+			INDEX idx_fault_cases_product (product_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS replay_results (
+			id VARCHAR(64) PRIMARY KEY,
+			case_id VARCHAR(64) NOT NULL,
+			config VARCHAR(32) NOT NULL,
+			model VARCHAR(128) NOT NULL DEFAULT '',
+			cause_correct TINYINT(1) NOT NULL,
+			faithfulness DOUBLE NOT NULL,
+			hallucination TINYINT(1) NOT NULL,
+			judged TINYINT(1) NOT NULL,
+			duration_ms BIGINT NOT NULL,
+			tool_failures INT NOT NULL,
+			result_json LONGTEXT NOT NULL,
+			created_by VARCHAR(64) NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			INDEX idx_replay_case_created (case_id, created_at),
+			INDEX idx_replay_config_created (config, created_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, statement := range statements {
@@ -311,6 +395,226 @@ func (m *MySQL) CountUsers() (int, error) {
 	var n int
 	err := m.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
+}
+
+func (m *MySQL) CreateApproval(v domain.Approval) error {
+	_, err := m.db.Exec(`INSERT INTO approvals (id, product_id, action_name, risk, reason, source, status, requester_id, requester_name, reviewer_id, reviewer_name, review_comment, executor_id, executor_name, execution_note, created_at, reviewed_at, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.ProductID, v.Action, v.Risk, v.Reason, v.Source, v.Status, v.RequesterID, v.RequesterName, v.ReviewerID, v.ReviewerName, v.ReviewComment, v.ExecutorID, v.ExecutorName, v.ExecutionNote, v.CreatedAt, nullTime(v.ReviewedAt), nullTime(v.ExecutedAt))
+	return err
+}
+
+const approvalColumns = `id, product_id, action_name, risk, reason, source, status, requester_id, requester_name, reviewer_id, reviewer_name, review_comment, executor_id, executor_name, execution_note, created_at, reviewed_at, executed_at`
+
+type approvalScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanApproval(scanner approvalScanner) (domain.Approval, error) {
+	var v domain.Approval
+	var reviewed, executed sql.NullTime
+	err := scanner.Scan(&v.ID, &v.ProductID, &v.Action, &v.Risk, &v.Reason, &v.Source, &v.Status, &v.RequesterID, &v.RequesterName, &v.ReviewerID, &v.ReviewerName, &v.ReviewComment, &v.ExecutorID, &v.ExecutorName, &v.ExecutionNote, &v.CreatedAt, &reviewed, &executed)
+	if reviewed.Valid {
+		v.ReviewedAt = reviewed.Time
+	}
+	if executed.Valid {
+		v.ExecutedAt = executed.Time
+	}
+	return v, err
+}
+
+func (m *MySQL) ListApprovals(status string) ([]domain.Approval, error) {
+	var rows *sql.Rows
+	var err error
+	if status == "" {
+		rows, err = m.db.Query(`SELECT ` + approvalColumns + ` FROM approvals ORDER BY created_at DESC LIMIT 500`)
+	} else {
+		rows, err = m.db.Query(`SELECT `+approvalColumns+` FROM approvals WHERE status = ? ORDER BY created_at DESC LIMIT 500`, status)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Approval, 0)
+	for rows.Next() {
+		v, err := scanApproval(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (m *MySQL) GetApproval(id string) (domain.Approval, error) {
+	return scanApproval(m.db.QueryRow(`SELECT `+approvalColumns+` FROM approvals WHERE id = ?`, id))
+}
+
+func (m *MySQL) UpdateApproval(v domain.Approval) error {
+	_, err := m.db.Exec(`UPDATE approvals SET status=?, reviewer_id=?, reviewer_name=?, review_comment=?, executor_id=?, executor_name=?, execution_note=?, reviewed_at=?, executed_at=? WHERE id=?`,
+		v.Status, v.ReviewerID, v.ReviewerName, v.ReviewComment, v.ExecutorID, v.ExecutorName, v.ExecutionNote, nullTime(v.ReviewedAt), nullTime(v.ExecutedAt), v.ID)
+	return err
+}
+
+func encodeStrings(v []string) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+func (m *MySQL) CreateDiagnosisRun(v domain.DiagnosisRun) error {
+	_, err := m.db.Exec(`INSERT INTO diagnosis_runs (id, product_id, question, mode, model, summary, confidence, evidence_count, alert_count, tool_call_count, failed_tool_count, knowledge_hit, memory_hit, asset_hit, duration_ms, alert_provider, log_provider, knowledge_mode, evidence_sources, tools, username, included, gold_cause, reviewer_note, reviewed_by, created_at, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.ProductID, v.Question, v.Mode, v.Model, v.Summary, v.Confidence, v.EvidenceCount, v.AlertCount, v.ToolCallCount, v.FailedToolCount, v.KnowledgeHit, v.MemoryHit, v.AssetHit, v.DurationMS, v.AlertProvider, v.LogProvider, v.KnowledgeMode, encodeStrings(v.EvidenceSources), encodeStrings(v.Tools), v.Username, v.Included, v.GoldCause, v.ReviewerNote, v.ReviewedBy, v.CreatedAt, nullTime(v.ReviewedAt))
+	return err
+}
+
+const diagnosisRunColumns = `id, product_id, question, mode, model, summary, confidence, evidence_count, alert_count, tool_call_count, failed_tool_count, knowledge_hit, memory_hit, asset_hit, duration_ms, alert_provider, log_provider, knowledge_mode, evidence_sources, tools, username, included, gold_cause, reviewer_note, reviewed_by, created_at, reviewed_at`
+
+func scanDiagnosisRun(scanner approvalScanner) (domain.DiagnosisRun, error) {
+	var v domain.DiagnosisRun
+	var sources, toolsJSON string
+	var reviewed sql.NullTime
+	err := scanner.Scan(&v.ID, &v.ProductID, &v.Question, &v.Mode, &v.Model, &v.Summary, &v.Confidence, &v.EvidenceCount, &v.AlertCount, &v.ToolCallCount, &v.FailedToolCount, &v.KnowledgeHit, &v.MemoryHit, &v.AssetHit, &v.DurationMS, &v.AlertProvider, &v.LogProvider, &v.KnowledgeMode, &sources, &toolsJSON, &v.Username, &v.Included, &v.GoldCause, &v.ReviewerNote, &v.ReviewedBy, &v.CreatedAt, &reviewed)
+	if err != nil {
+		return v, err
+	}
+	_ = json.Unmarshal([]byte(sources), &v.EvidenceSources)
+	_ = json.Unmarshal([]byte(toolsJSON), &v.Tools)
+	if v.EvidenceSources == nil {
+		v.EvidenceSources = []string{}
+	}
+	if v.Tools == nil {
+		v.Tools = []string{}
+	}
+	if reviewed.Valid {
+		v.ReviewedAt = reviewed.Time
+	}
+	return v, nil
+}
+
+func (m *MySQL) ListDiagnosisRuns(limit int) ([]domain.DiagnosisRun, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	rows, err := m.db.Query(`SELECT `+diagnosisRunColumns+` FROM diagnosis_runs ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.DiagnosisRun, 0)
+	for rows.Next() {
+		v, err := scanDiagnosisRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (m *MySQL) GetDiagnosisRun(id string) (domain.DiagnosisRun, error) {
+	return scanDiagnosisRun(m.db.QueryRow(`SELECT `+diagnosisRunColumns+` FROM diagnosis_runs WHERE id = ?`, id))
+}
+
+func (m *MySQL) UpdateDiagnosisRunReview(v domain.DiagnosisRun) error {
+	_, err := m.db.Exec(`UPDATE diagnosis_runs SET included=?, gold_cause=?, reviewer_note=?, reviewed_by=?, reviewed_at=? WHERE id=?`, v.Included, v.GoldCause, v.ReviewerNote, v.ReviewedBy, nullTime(v.ReviewedAt), v.ID)
+	return err
+}
+
+func (m *MySQL) CreateFaultCase(v domain.FaultCase) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Exec(`INSERT INTO fault_cases (id, name, product_id, version, source, payload, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.Name, v.ProductID, v.Version, v.Source, string(payload), v.CreatedBy, v.CreatedAt)
+	return err
+}
+
+func scanFaultCase(scanner approvalScanner) (domain.FaultCase, error) {
+	var v domain.FaultCase
+	var payload string
+	if err := scanner.Scan(&payload); err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal([]byte(payload), &v); err != nil {
+		return v, err
+	}
+	return v, nil
+}
+
+func (m *MySQL) ListFaultCases() ([]domain.FaultCase, error) {
+	rows, err := m.db.Query(`SELECT payload FROM fault_cases ORDER BY created_at DESC LIMIT 1000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.FaultCase, 0)
+	for rows.Next() {
+		v, err := scanFaultCase(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (m *MySQL) GetFaultCase(id string) (domain.FaultCase, error) {
+	return scanFaultCase(m.db.QueryRow(`SELECT payload FROM fault_cases WHERE id = ?`, id))
+}
+
+func (m *MySQL) DeleteFaultCase(id string) error {
+	_, err := m.db.Exec(`DELETE FROM fault_cases WHERE id = ?`, id)
+	return err
+}
+
+func (m *MySQL) CreateReplayResult(v domain.ReplayResult) error {
+	payload, err := json.Marshal(v.Diagnosis)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Exec(`INSERT INTO replay_results (id, case_id, config, model, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.CaseID, v.Config, v.Model, v.CauseCorrect, v.Faithfulness, v.Hallucination, v.Judged, v.DurationMS, v.ToolFailures, string(payload), v.CreatedBy, v.CreatedAt)
+	return err
+}
+
+func scanReplayResult(scanner approvalScanner) (domain.ReplayResult, error) {
+	var v domain.ReplayResult
+	var payload string
+	err := scanner.Scan(&v.ID, &v.CaseID, &v.Config, &v.Model, &v.CauseCorrect, &v.Faithfulness, &v.Hallucination, &v.Judged, &v.DurationMS, &v.ToolFailures, &payload, &v.CreatedBy, &v.CreatedAt)
+	if err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal([]byte(payload), &v.Diagnosis); err != nil {
+		return v, err
+	}
+	return v, nil
+}
+
+func (m *MySQL) ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 1000
+	}
+	columns := `id, case_id, config, model, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
+	var rows *sql.Rows
+	var err error
+	if caseID == "" {
+		rows, err = m.db.Query(`SELECT `+columns+` FROM replay_results ORDER BY created_at DESC LIMIT ?`, limit)
+	} else {
+		rows, err = m.db.Query(`SELECT `+columns+` FROM replay_results WHERE case_id = ? ORDER BY created_at DESC LIMIT ?`, caseID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.ReplayResult, 0)
+	for rows.Next() {
+		v, err := scanReplayResult(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 func (m *MySQL) Close() error { return m.db.Close() }

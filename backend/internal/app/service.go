@@ -15,10 +15,11 @@ import (
 )
 
 type Service struct {
-	Tools     *tools.Service
-	LLM       *llm.Client
-	Repo      storage.Repository
-	inspectMu sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
+	Tools      *tools.Service
+	LLM        *llm.Client
+	Repo       storage.Repository
+	inspectMu  sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
+	approvalMu sync.Mutex // 串行化审批状态迁移，避免重复审批或执行
 }
 
 func New(t *tools.Service, l *llm.Client, repos ...storage.Repository) *Service {
@@ -39,14 +40,19 @@ func (s *Service) Diagnose(ctx context.Context, req domain.DiagnosisRequest) dom
 // DiagnoseStream 与 Diagnose 相同，但在诊断过程中通过 emit 实时推送进度事件。
 // LLM 可用时走真正的工具调用循环（Agent），否则走本地启发式兜底。
 func (s *Service) DiagnoseStream(ctx context.Context, req domain.DiagnosisRequest, emit func(domain.StreamEvent)) domain.DiagnosisResult {
+	started := time.Now()
 	if req.WindowMinute <= 0 || req.WindowMinute > 1440 {
 		req.WindowMinute = 30
 	}
+	var result domain.DiagnosisResult
 	if s.LLM != nil && s.LLM.Enabled() {
-		return s.diagnoseAgent(ctx, req, emit)
+		result = s.diagnoseAgent(ctx, req, emit)
+	} else {
+		emit(domain.StreamEvent{Type: "status", Message: "未配置大模型，使用本地启发式诊断"})
+		result = s.diagnoseHeuristic(ctx, req)
 	}
-	emit(domain.StreamEvent{Type: "status", Message: "未配置大模型，使用本地启发式诊断"})
-	return s.diagnoseHeuristic(ctx, req)
+	s.recordDiagnosisRun(ctx, req, result, time.Since(started))
+	return result
 }
 
 // diagnoseAgent 让模型自主决定调用哪些只读工具（最多 maxToolRounds 轮）收集证据，再产出结构化诊断。
@@ -246,6 +252,127 @@ func (s *Service) mergeHeuristic(ctx context.Context, req domain.DiagnosisReques
 	}
 	s.addAudit(ctx, "diagnose", req.ProductID, "success", time.Since(started).Milliseconds())
 	return result
+}
+
+var approvalStatuses = map[string]bool{
+	"pending": true, "approved": true, "rejected": true, "executed": true, "cancelled": true,
+}
+
+func (s *Service) CreateApproval(ctx context.Context, req domain.ApprovalRequest) (domain.Approval, error) {
+	req.ProductID = strings.TrimSpace(req.ProductID)
+	req.Action = strings.TrimSpace(req.Action)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.Risk = strings.ToLower(strings.TrimSpace(req.Risk))
+	req.Source = strings.ToLower(strings.TrimSpace(req.Source))
+	if req.ProductID == "" || req.Action == "" || req.Reason == "" {
+		return domain.Approval{}, fmt.Errorf("产品、处置动作和申请理由不能为空")
+	}
+	if req.Risk == "" {
+		req.Risk = "high"
+	}
+	if req.Risk != "low" && req.Risk != "medium" && req.Risk != "high" {
+		return domain.Approval{}, fmt.Errorf("风险级别必须是 low、medium 或 high")
+	}
+	if req.Source == "" {
+		req.Source = "manual"
+	}
+	userID, username, _ := actorFromContext(ctx)
+	v := domain.Approval{
+		ID: fmt.Sprintf("APR-%d", time.Now().UnixNano()), ProductID: req.ProductID,
+		Action: req.Action, Risk: req.Risk, Reason: req.Reason, Source: req.Source,
+		Status: "pending", RequesterID: userID, RequesterName: username, CreatedAt: time.Now(),
+	}
+	if err := s.Repo.CreateApproval(v); err != nil {
+		s.addAudit(ctx, "create_approval", req.ProductID, "error", 0)
+		return domain.Approval{}, err
+	}
+	s.addAudit(ctx, "create_approval", req.ProductID, "success", 0)
+	return v, nil
+}
+
+func (s *Service) ListApprovals(status string) ([]domain.Approval, error) {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status != "" && !approvalStatuses[status] {
+		return nil, fmt.Errorf("无效的审批状态")
+	}
+	return s.Repo.ListApprovals(status)
+}
+
+func (s *Service) GetApproval(id string) (domain.Approval, error) {
+	return s.Repo.GetApproval(strings.TrimSpace(id))
+}
+
+func (s *Service) ReviewApproval(ctx context.Context, id string, req domain.ApprovalDecisionRequest) (domain.Approval, error) {
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+	v, err := s.Repo.GetApproval(strings.TrimSpace(id))
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if v.Status != "pending" {
+		return domain.Approval{}, fmt.Errorf("只有待审批的申请可以审核，当前状态为 %s", v.Status)
+	}
+	decision := strings.ToLower(strings.TrimSpace(req.Decision))
+	comment := strings.TrimSpace(req.Comment)
+	if decision != "approved" && decision != "rejected" {
+		return domain.Approval{}, fmt.Errorf("审批决定必须是 approved 或 rejected")
+	}
+	if decision == "rejected" && comment == "" {
+		return domain.Approval{}, fmt.Errorf("驳回时必须填写原因")
+	}
+	userID, username, _ := actorFromContext(ctx)
+	v.Status, v.ReviewerID, v.ReviewerName = decision, userID, username
+	v.ReviewComment, v.ReviewedAt = comment, time.Now()
+	if err := s.Repo.UpdateApproval(v); err != nil {
+		s.addAudit(ctx, "review_approval", v.ProductID, "error", 0)
+		return domain.Approval{}, err
+	}
+	s.addAudit(ctx, "review_approval", v.ProductID, "success", 0)
+	return v, nil
+}
+
+func (s *Service) ExecuteApproval(ctx context.Context, id string, req domain.ApprovalExecutionRequest) (domain.Approval, error) {
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+	v, err := s.Repo.GetApproval(strings.TrimSpace(id))
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if v.Status != "approved" {
+		return domain.Approval{}, fmt.Errorf("只有已批准的申请可以确认执行，当前状态为 %s", v.Status)
+	}
+	userID, username, _ := actorFromContext(ctx)
+	v.Status, v.ExecutorID, v.ExecutorName = "executed", userID, username
+	v.ExecutionNote, v.ExecutedAt = strings.TrimSpace(req.Note), time.Now()
+	if err := s.Repo.UpdateApproval(v); err != nil {
+		s.addAudit(ctx, "execute_approval", v.ProductID, "error", 0)
+		return domain.Approval{}, err
+	}
+	s.addAudit(ctx, "execute_approval", v.ProductID, "success", 0)
+	return v, nil
+}
+
+func (s *Service) CancelApproval(ctx context.Context, id string) (domain.Approval, error) {
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+	v, err := s.Repo.GetApproval(strings.TrimSpace(id))
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if v.Status != "pending" {
+		return domain.Approval{}, fmt.Errorf("只有待审批的申请可以撤销")
+	}
+	userID, _, role := actorFromContext(ctx)
+	if role != "admin" && (userID == "" || userID != v.RequesterID) {
+		return domain.Approval{}, fmt.Errorf("只能撤销自己发起的申请")
+	}
+	v.Status = "cancelled"
+	if err := s.Repo.UpdateApproval(v); err != nil {
+		s.addAudit(ctx, "cancel_approval", v.ProductID, "error", 0)
+		return domain.Approval{}, err
+	}
+	s.addAudit(ctx, "cancel_approval", v.ProductID, "success", 0)
+	return v, nil
 }
 
 // ---------- Agent 相关辅助 ----------

@@ -8,17 +8,21 @@ import (
 )
 
 type Memory struct {
-	mu      sync.RWMutex
-	issues  []domain.Issue
-	audits  []domain.AuditEvent
-	tasks    []domain.InspectionTask
-	reports  []domain.InspectionReport
-	memories []domain.Memory
-	users    []domain.User
+	mu        sync.RWMutex
+	issues    []domain.Issue
+	audits    []domain.AuditEvent
+	tasks     []domain.InspectionTask
+	reports   []domain.InspectionReport
+	memories  []domain.Memory
+	users     []domain.User
+	approvals []domain.Approval
+	runs      []domain.DiagnosisRun
+	cases     []domain.FaultCase
+	replays   []domain.ReplayResult
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, users: []domain.User{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -170,6 +174,138 @@ func (m *Memory) CountUsers() (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.users), nil
+}
+
+func (m *Memory) CreateApproval(v domain.Approval) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.approvals = append([]domain.Approval{v}, m.approvals...)
+	return nil
+}
+func (m *Memory) ListApprovals(status string) ([]domain.Approval, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]domain.Approval, 0, len(m.approvals))
+	for _, v := range m.approvals {
+		if status == "" || v.Status == status {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+func (m *Memory) GetApproval(id string) (domain.Approval, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, v := range m.approvals {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return domain.Approval{}, fmt.Errorf("审批单不存在: %s", id)
+}
+func (m *Memory) UpdateApproval(v domain.Approval) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.approvals {
+		if m.approvals[i].ID == v.ID {
+			m.approvals[i] = v
+			return nil
+		}
+	}
+	return fmt.Errorf("审批单不存在: %s", v.ID)
+}
+
+func (m *Memory) CreateDiagnosisRun(v domain.DiagnosisRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.runs = append([]domain.DiagnosisRun{v}, m.runs...)
+	if len(m.runs) > 5000 {
+		m.runs = m.runs[:5000]
+	}
+	return nil
+}
+func (m *Memory) ListDiagnosisRuns(limit int) ([]domain.DiagnosisRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > len(m.runs) {
+		limit = len(m.runs)
+	}
+	return append([]domain.DiagnosisRun(nil), m.runs[:limit]...), nil
+}
+func (m *Memory) GetDiagnosisRun(id string) (domain.DiagnosisRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, v := range m.runs {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return domain.DiagnosisRun{}, fmt.Errorf("诊断实验记录不存在: %s", id)
+}
+func (m *Memory) UpdateDiagnosisRunReview(v domain.DiagnosisRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.runs {
+		if m.runs[i].ID == v.ID {
+			m.runs[i] = v
+			return nil
+		}
+	}
+	return fmt.Errorf("诊断实验记录不存在: %s", v.ID)
+}
+
+func (m *Memory) CreateFaultCase(v domain.FaultCase) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cases = append([]domain.FaultCase{v}, m.cases...)
+	return nil
+}
+func (m *Memory) ListFaultCases() ([]domain.FaultCase, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]domain.FaultCase(nil), m.cases...), nil
+}
+func (m *Memory) GetFaultCase(id string) (domain.FaultCase, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, v := range m.cases {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return domain.FaultCase{}, fmt.Errorf("故障案例不存在: %s", id)
+}
+func (m *Memory) DeleteFaultCase(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := m.cases[:0]
+	for _, v := range m.cases {
+		if v.ID != id {
+			out = append(out, v)
+		}
+	}
+	m.cases = out
+	return nil
+}
+func (m *Memory) CreateReplayResult(v domain.ReplayResult) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.replays = append([]domain.ReplayResult{v}, m.replays...)
+	return nil
+}
+func (m *Memory) ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]domain.ReplayResult, 0)
+	for _, v := range m.replays {
+		if caseID == "" || v.CaseID == caseID {
+			out = append(out, v)
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (m *Memory) Close() error { return nil }

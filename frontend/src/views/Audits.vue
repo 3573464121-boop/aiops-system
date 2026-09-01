@@ -16,6 +16,11 @@ const actionText = a => ({
   inspection: '巡检执行',
   delete_inspection_task: '删除巡检任务',
   create_user: '创建用户',
+  create_approval: '提交审批申请',
+  review_approval: '审核审批申请',
+  execute_approval: '确认处置执行',
+  cancel_approval: '撤销审批申请',
+  review_diagnosis_run: '复核诊断实验记录',
 }[a] || a)
 
 const roleText = r => ({

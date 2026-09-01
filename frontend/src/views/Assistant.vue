@@ -100,6 +100,28 @@ async function createIssue(bot) {
   } catch (e) { bot.issueMsg = `创建失败：${e.message}` }
 }
 
+async function submitApproval(bot, action) {
+  if (!bot.result || action._submitting || action.approval_id) return
+  action._submitting = true
+  try {
+    const approval = await api('/approvals', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_id: bot.result.product_id || productId.value,
+        action: action.name,
+        risk: action.risk,
+        reason: `${bot.result.summary}\n诊断问题：${bot.question}`,
+        source: 'diagnosis',
+      }),
+    })
+    action.approval_id = approval.id
+  } catch (e) {
+    action._approval_error = e.message
+  } finally {
+    action._submitting = false
+  }
+}
+
 function exportChat() {
   const lines = []
   for (const m of active.value.messages) {
@@ -216,7 +238,14 @@ onMounted(async () => {
 
                 <div class="block" v-if="m.result.actions.length">
                   <div class="block-h">处置建议</div>
-                  <div v-for="a in m.result.actions" :key="a.name" class="act"><span>{{ a.name }}</span><span class="act-tags"><a-tag v-if="a.requires_approval" color="volcano">需审批</a-tag><a-tag :color="riskColor(a.risk)">{{ riskText(a.risk) }}</a-tag></span></div>
+                  <div v-for="a in m.result.actions" :key="a.name" class="act">
+                    <span>{{ a.name }}<small v-if="a._approval_error" class="approval-error">{{ a._approval_error }}</small></span>
+                    <span class="act-tags">
+                      <a-tag v-if="a.approval_id" color="blue">已提交审批</a-tag>
+                      <a-button v-else-if="a.requires_approval" size="small" danger ghost :loading="a._submitting" @click="submitApproval(m, a)">提交审批</a-button>
+                      <a-tag :color="riskColor(a.risk)">{{ riskText(a.risk) }}</a-tag>
+                    </span>
+                  </div>
                 </div>
 
                 <a-collapse :bordered="false" class="reason" v-if="m.result.evidence.length">
@@ -295,6 +324,7 @@ onMounted(async () => {
 .block-h { font-size: 12px; font-weight: 700; color: #667085; margin-bottom: 8px; }
 .hyp, .act { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 12px; border-radius: 8px; background: #f6f8fb; margin-bottom: 6px; font-size: 13px; }
 .act-tags { flex: none; }
+.approval-error { display: block; color: #cf1322; font-size: 11px; margin-top: 3px; }
 .ev { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f0f0f0; }
 .ev-body strong { font-size: 13px; } .ev-body p { margin: 3px 0; color: #667085; font-size: 12px; line-height: 1.5; } .ev-body code { color: #8c98a8; font-size: 11px; }
 .card-foot { display: flex; align-items: center; gap: 12px; } .gen { color: #b0b8c4; font-size: 11px; }

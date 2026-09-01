@@ -1,0 +1,12 @@
+{
+  "name": "支付服务连接池耗尽",
+  "product_id": "payment",
+  "question": "分析支付服务持续超时和错误率升高的根因",
+  "gold_cause": "数据库连接池耗尽导致请求排队并超时",
+  "source": "synthetic",
+  "version": "v1",
+  "tags": ["database", "timeout", "connection-pool"],
+  "alerts": [{"id":"ALERT-001","product_id":"payment","rule":"支付接口错误率过高","severity":1,"target":"payment-api-01","value":"error_rate=12.4%"}],
+  "logs": [{"type":"log","title":"payment-api-01","content":"connection pool exhausted, wait timeout after 3000ms; active=50 idle=0 max=50","score":1,"source":"replay/payment-api-01"}],
+  "assets": [{"id":"srv-p01","product_id":"payment","kind":"server","name":"payment-api-01","ip":"10.0.1.11","detail":"支付接口服务","env":"prod","status":"online"}]
+}

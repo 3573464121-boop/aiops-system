@@ -26,5 +26,22 @@ type Repository interface {
 	ListUsers() ([]domain.User, error)
 	CountUsers() (int, error)
 
+	CreateApproval(domain.Approval) error
+	ListApprovals(status string) ([]domain.Approval, error)
+	GetApproval(id string) (domain.Approval, error)
+	UpdateApproval(domain.Approval) error
+
+	CreateDiagnosisRun(domain.DiagnosisRun) error
+	ListDiagnosisRuns(limit int) ([]domain.DiagnosisRun, error)
+	GetDiagnosisRun(id string) (domain.DiagnosisRun, error)
+	UpdateDiagnosisRunReview(domain.DiagnosisRun) error
+
+	CreateFaultCase(domain.FaultCase) error
+	ListFaultCases() ([]domain.FaultCase, error)
+	GetFaultCase(id string) (domain.FaultCase, error)
+	DeleteFaultCase(id string) error
+	CreateReplayResult(domain.ReplayResult) error
+	ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error)
+
 	Close() error
 }

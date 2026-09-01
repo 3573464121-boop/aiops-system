@@ -14,10 +14,13 @@
 - 记忆空间。跨对话沉淀长期经验与环境事实，诊断时按相关度自动召回并作为背景注入，模型也可主动调用 `recall_memory`；支持从诊断结论用模型提炼记忆草稿。
 - 认证与权限。用户名密码登录，bcrypt 存哈希，HMAC 签名令牌鉴权；分管理员与只读两种角色，管理类操作（配置、增删）仅管理员可执行。
 - 可插拔数据源。告警与日志通过 Provider 接口接入，内置夜莺（Nightingale）与 Loki 适配器，未配置时使用内置演示数据；可扩展 Elasticsearch、ClickHouse 等。
-- 可审计。工具调用轨迹、证据来源、操作审计日志齐全；高风险动作强制标记需审批。
+- 数据源管理。统一展示告警、日志、知识、资产、模型与存储的运行模式、脱敏地址和连接检测结果。
+- 实验留档。每次诊断自动记录配置、工具、证据来源和运行指标；人工复核标准根因后才能纳入并导出论文数据集。
+- 可审计。工具调用轨迹、证据来源和操作人身份均写入审计日志；高风险动作通过审批中心完成人工批准、驳回和执行确认。
 - 多模型。OpenAI 兼容接口，默认对接 DeepSeek，也可切换到本机 Ollama。
-- 控制台。Vue 3 + Ant Design，包含登录、仪表盘、运维助手对话、告警、知识库、工单、审计、记忆空间、巡检管理、资产管理等页面。
-- 持久化。工单、审计、巡检、记忆、用户均写入 MySQL，不可用时自动回退内存。
+- 控制台。Vue 3 + Ant Design，包含登录、仪表盘、运维助手、告警、知识库、工单、审计、记忆、巡检、资产、审批、数据源、实验记录和故障回放等页面。
+- 故障回放。导入版本化、脱敏的告警、日志与资产快照，使用完整系统、仅 BM25 和无 Agent 三组配置回放，持久化诊断结果与判官指标。
+- 持久化。工单、审计、巡检、记忆、用户、审批单、诊断实验记录和回放结果均写入 MySQL，不可用时自动回退内存。
 
 ## 架构
 
@@ -41,18 +44,20 @@ backend/
   cmd/server/        服务入口，按环境变量选择数据源与存储
   cmd/eval/          诊断质量评测程序
   internal/
-    app/             诊断编排：工具循环、流式、工单、审计、巡检、记忆、认证
+    app/             诊断编排：工具循环、流式、审批、巡检、记忆、认证、实验留档
     auth/            HMAC 签名登录令牌的签发与校验
     domain/          领域模型
     httpapi/         HTTP 路由（含 SSE 流式接口、登录与角色鉴权中间件）
     knowledge/       Markdown 分块、BM25、向量检索、RRF
     llm/             OpenAI 兼容客户端（工具调用、限流退避重试）
     embed/           文本向量化客户端
-    storage/         Repository：内存 / MySQL（工单/审计/巡检/记忆/用户）
+    storage/         Repository：内存 / MySQL（业务数据与实验记录）
     tools/           Provider 接口、夜莺/Loki 适配器、资产源、演示数据
   knowledge-base/    历史故障复盘与运维手册
 frontend/
-  src/               App.vue（导航/登录态）、router（守卫）、api（带令牌）、views/
+  src/               App.vue（导航/登录态）、router（守卫）、api（带令牌）、views/（含故障回放）
+docs/
+  research-protocol.md  研究问题、实验设计与投稿前检查
 ```
 
 ## 技术栈
@@ -87,7 +92,7 @@ npm run dev                # 默认 http://localhost:5173
 | `EMBED_BASE_URL` / `EMBED_MODEL` | 向量检索嵌入模型，例如本机 Ollama 的 `bge-m3`；留空则只用 BM25 |
 | `N9E_BASE_URL` / `N9E_TOKEN` | 夜莺告警源，留空用演示数据 |
 | `LOG_BASE_URL` / `LOG_TOKEN` | Loki 日志源，留空用演示数据 |
-| `MYSQL_DSN` | 工单、审计、巡检、记忆、用户的持久化，留空用内存 |
+| `MYSQL_DSN` | 业务数据和诊断实验记录的持久化，留空用内存 |
 | `AUTH_SECRET` | 登录令牌签名密钥，生产环境务必改为随机串；留空用内置开发密钥并告警 |
 | `AUTH_ADMIN_PASSWORD` | 首次启动无用户时自动创建的管理员 `admin` 初始口令，留空默认 `admin123` |
 
@@ -107,7 +112,7 @@ npm run dev                # 默认 http://localhost:5173
 
 其中根因准确率、忠实度、幻觉率由 LLM 判官评定。可以看到，接入证据的智能体在根因准确率和忠实度上明显优于无证据的纯模型问答，后者结论虽然听起来合理，却缺乏可核验的证据；向量检索相比纯关键词在语义化查询上略有优势。
 
-需要说明其局限：当前判官与被测为同一模型，存在自评偏差；数据集为演示规模（10 例），结论仅作方法可行性的初步验证。更严谨的评测需要独立判官与更大、更真实的数据集。
+需要说明其局限：当前判官与被测为同一模型，存在自评偏差；数据集为演示规模（10 例），结论仅作方法可行性的初步验证。更严谨的评测需要独立判官与更大、更真实的数据集。后续实验的纳入标准、消融配置和统计方法见 `docs/research-protocol.md`。
 
 ## 主要接口
 
@@ -118,6 +123,8 @@ GET  /healthz
 POST /api/v1/auth/login           登录，换取令牌
 GET  /api/v1/auth/me              当前登录用户
 GET  /api/v1/system/status
+GET  /api/v1/data-sources                         数据源状态
+POST /api/v1/data-sources/:name/test              连接检测（仅管理员）
 GET  /api/v1/alerts/active?product_id=payment
 GET  /api/v1/logs/search?product_id=payment&query=timeout
 GET  /api/v1/knowledge/search?query=告警检索
@@ -137,18 +144,30 @@ POST /api/v1/memories                           新增记忆（仅管理员）
 DELETE /api/v1/memories/:id                     删除记忆（仅管理员）
 POST /api/v1/memories/extract                   从文本提炼记忆草稿（仅管理员）
 GET  /api/v1/users   POST /api/v1/users         用户管理（仅管理员）
+GET  /api/v1/approvals                         审批单列表，可按 status 筛选
+POST /api/v1/approvals                         提交审批申请
+POST /api/v1/approvals/:id/review              批准或驳回（仅管理员）
+POST /api/v1/approvals/:id/execute             确认已人工执行（仅管理员）
+POST /api/v1/approvals/:id/cancel              撤销待审批申请
+GET  /api/v1/diagnosis-runs                    诊断实验记录（仅管理员）
+POST /api/v1/diagnosis-runs/:id/review         复核并标注标准根因（仅管理员）
+GET  /api/v1/fault-cases                       故障案例列表（仅管理员）
+POST /api/v1/fault-cases                       导入故障案例（仅管理员）
+GET  /api/v1/fault-cases/:id                   故障案例详情（仅管理员）
+DELETE /api/v1/fault-cases/:id                 删除故障案例（仅管理员）
+POST /api/v1/fault-cases/:id/replay            运行对照回放（仅管理员）
+GET  /api/v1/replay-results?case_id=           回放结果（仅管理员）
 GET  /api/v1/audits
 ```
 
 ## 现状与后续
 
-已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、向量 RAG、评测程序、资产管理（CMDB）、主动巡检、记忆空间、认证与角色权限。
+已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、数据源检测、向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入与对照回放、资产管理（CMDB）、主动巡检、记忆空间、认证与角色权限、操作人审计、高风险处置审批闭环。
 
 计划中：
 
-- 审计日志记录操作人（当前已有登录身份，尚未贯穿到审计事件）；
 - 记忆的个人 / 团队作用域（当前支持全局 / 产品两级，个人 / 团队待接入用户身份后细分）；
-- 工作流模块：把诊断与处置流程做成可视化编排（控制台中已留占位入口）；
+- 真实处置执行器与审批策略（当前审批通过后仍由管理员线下执行并确认，不直接操作生产环境）；
 - 更大规模、更真实的评测数据集与独立判官。
 
 ## 许可

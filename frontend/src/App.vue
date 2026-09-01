@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   DashboardOutlined, RobotOutlined, AlertOutlined, ReadOutlined, ProfileOutlined, AuditOutlined,
   BulbOutlined, ScheduleOutlined, DatabaseOutlined, ApartmentOutlined,
+  CloudServerOutlined, ExperimentOutlined, FileSearchOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltFilled, LogoutOutlined, UserOutlined,
 } from '@ant-design/icons-vue'
 import { getUser, clearSession } from './api'
@@ -32,7 +33,10 @@ const nav = [
   { to: '/memory', label: '记忆空间', icon: BulbOutlined },
   { to: '/inspection', label: '巡检管理', icon: ScheduleOutlined },
   { to: '/assets', label: '资产管理', icon: DatabaseOutlined },
-  { to: '/workflow', label: '工作流', icon: ApartmentOutlined },
+  { to: '/workflow', label: '审批中心', icon: ApartmentOutlined },
+  { to: '/data-sources', label: '数据源', icon: CloudServerOutlined },
+  { to: '/experiments', label: '实验记录', icon: ExperimentOutlined, adminOnly: true },
+  { to: '/replay', label: '故障回放', icon: FileSearchOutlined, adminOnly: true },
 ]
 </script>
 
@@ -44,7 +48,7 @@ const nav = [
       <div class="nav">
         <template v-for="(item, i) in nav" :key="i">
           <div v-if="item.divider" class="nav-div"></div>
-          <router-link v-else :to="item.to" class="nav-item" :class="{ active: route.path === item.to }" :title="item.label">
+          <router-link v-else-if="!item.adminOnly || user?.role === 'admin'" :to="item.to" class="nav-item" :class="{ active: route.path === item.to }" :title="item.label">
             <component :is="item.icon" class="nav-ic" />
             <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
           </router-link>

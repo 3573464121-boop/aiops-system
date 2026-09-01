@@ -22,8 +22,9 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		storageMode = storageModes[0]
 	}
 	r := gin.New()
+	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Logger(), gin.Recovery())
-	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173"}, AllowMethods: []string{"GET", "POST", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID"}, MaxAge: 12 * time.Hour}))
+	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173"}, AllowMethods: []string{"GET", "POST", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID"}, MaxAge: 12 * time.Hour}))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "time": time.Now(), "knowledge_chunks": knowledgeCount, "storage": storageMode})
 	})
@@ -89,6 +90,41 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 
 	api.GET("/system/status", func(c *gin.Context) {
 		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "asset_provider": s.Tools.AssetProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
+	})
+	api.GET("/data-sources", func(c *gin.Context) {
+		items := s.Tools.DataSources()
+		llmConfigured := strings.TrimSpace(os.Getenv("LLM_BASE_URL")) != ""
+		llmStatus, llmMessage := "demo", "未配置大模型服务"
+		if llmConfigured {
+			llmStatus, llmMessage = "ready", "大模型服务已配置"
+		}
+		items = append(items,
+			domain.DataSourceStatus{Name: "llm", Kind: "model", Mode: mode("LLM_BASE_URL"), Configured: llmConfigured, Status: llmStatus, Message: llmMessage},
+			domain.DataSourceStatus{Name: "storage", Kind: "storage", Mode: storageMode, Configured: storageMode == "mysql", Status: "ready", Message: "持久化存储可用"},
+		)
+		c.JSON(200, gin.H{"items": items, "total": len(items)})
+	})
+	api.POST("/data-sources/:name/test", requireAdmin, func(c *gin.Context) {
+		name := strings.ToLower(strings.TrimSpace(c.Param("name")))
+		if name == "llm" {
+			configured := strings.TrimSpace(os.Getenv("LLM_BASE_URL")) != ""
+			status, message := "error", "未配置 LLM_BASE_URL"
+			if configured {
+				status, message = "ready", "大模型服务已配置；实际可用性由下一次诊断验证"
+			}
+			c.JSON(200, domain.DataSourceStatus{Name: name, Kind: "model", Mode: mode("LLM_BASE_URL"), Configured: configured, Status: status, Message: message})
+			return
+		}
+		if name == "storage" {
+			c.JSON(200, domain.DataSourceStatus{Name: name, Kind: "storage", Mode: storageMode, Configured: storageMode == "mysql", Status: "ready", Message: "当前存储连接正常"})
+			return
+		}
+		result := s.Tools.TestDataSource(name)
+		if result.Status == "error" {
+			c.JSON(http.StatusBadGateway, result)
+			return
+		}
+		c.JSON(200, result)
 	})
 	api.GET("/tools", func(c *gin.Context) {
 		c.JSON(200, gin.H{"items": []gin.H{{"name": "get_alerts", "mode": s.Tools.AlertProviderName(), "readonly": true}, {"name": "search_logs", "mode": s.Tools.LogProviderName(), "readonly": true}, {"name": "search_knowledge", "mode": s.Tools.KnowledgeMode(), "readonly": true}, {"name": "get_assets", "mode": s.Tools.AssetProviderName(), "readonly": true}, {"name": "lookup_ip", "mode": s.Tools.AssetProviderName(), "readonly": true}, {"name": "recall_memory", "mode": "memory", "readonly": true}}})
@@ -347,6 +383,149 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			return
 		}
 		c.JSON(http.StatusCreated, u)
+	})
+	api.GET("/approvals", func(c *gin.Context) {
+		v, err := s.ListApprovals(c.Query("status"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
+	})
+	api.GET("/approvals/:id", func(c *gin.Context) {
+		v, err := s.GetApproval(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
+	api.POST("/approvals", func(c *gin.Context) {
+		var req domain.ApprovalRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.CreateApproval(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.POST("/approvals/:id/review", requireAdmin, func(c *gin.Context) {
+		var req domain.ApprovalDecisionRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.ReviewApproval(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
+	api.POST("/approvals/:id/execute", requireAdmin, func(c *gin.Context) {
+		var req domain.ApprovalExecutionRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.ExecuteApproval(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
+	api.POST("/approvals/:id/cancel", func(c *gin.Context) {
+		v, err := s.CancelApproval(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
+	api.GET("/diagnosis-runs", requireAdmin, func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "500"))
+		v, err := s.ListDiagnosisRuns(limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": v, "total": len(v)})
+	})
+	api.POST("/diagnosis-runs/:id/review", requireAdmin, func(c *gin.Context) {
+		var req domain.DiagnosisRunReviewRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.ReviewDiagnosisRun(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
+	api.GET("/fault-cases", requireAdmin, func(c *gin.Context) {
+		v, err := s.ListFaultCases()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
+	})
+	api.POST("/fault-cases", requireAdmin, func(c *gin.Context) {
+		var req domain.FaultCaseRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.CreateFaultCase(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.GET("/fault-cases/:id", requireAdmin, func(c *gin.Context) {
+		v, err := s.GetFaultCase(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.DELETE("/fault-cases/:id", requireAdmin, func(c *gin.Context) {
+		if err := s.DeleteFaultCase(c.Request.Context(), c.Param("id")); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	api.POST("/fault-cases/:id/replay", requireAdmin, func(c *gin.Context) {
+		var req domain.ReplayRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.ReplayFaultCase(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
+	})
+	api.GET("/replay-results", requireAdmin, func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
+		v, err := s.ListReplayResults(c.Query("case_id"), limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
 	})
 	api.GET("/audits", func(c *gin.Context) {
 		v, err := s.Audits()
