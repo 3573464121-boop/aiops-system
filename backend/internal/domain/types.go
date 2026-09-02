@@ -154,32 +154,32 @@ type DiagnosisRunReviewRequest struct {
 }
 
 type FaultCaseRequest struct {
-	Name       string     `json:"name" binding:"required"`
-	ProductID  string     `json:"product_id" binding:"required"`
-	Question   string     `json:"question" binding:"required"`
-	GoldCause  string     `json:"gold_cause" binding:"required"`
-	Source     string     `json:"source"`
-	Version    string     `json:"version"`
-	Tags       []string   `json:"tags"`
-	Alerts     []Alert    `json:"alerts"`
-	Logs       []Evidence `json:"logs"`
-	Assets     []Asset    `json:"assets"`
+	Name      string     `json:"name" binding:"required"`
+	ProductID string     `json:"product_id" binding:"required"`
+	Question  string     `json:"question" binding:"required"`
+	GoldCause string     `json:"gold_cause" binding:"required"`
+	Source    string     `json:"source"`
+	Version   string     `json:"version"`
+	Tags      []string   `json:"tags"`
+	Alerts    []Alert    `json:"alerts"`
+	Logs      []Evidence `json:"logs"`
+	Assets    []Asset    `json:"assets"`
 }
 
 type FaultCase struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	ProductID  string     `json:"product_id"`
-	Question   string     `json:"question"`
-	GoldCause  string     `json:"gold_cause"`
-	Source     string     `json:"source"`  // real | synthetic | imported
-	Version    string     `json:"version"`
-	Tags       []string   `json:"tags"`
-	Alerts     []Alert    `json:"alerts"`
-	Logs       []Evidence `json:"logs"`
-	Assets     []Asset    `json:"assets"`
-	CreatedBy  string     `json:"created_by"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	ProductID string     `json:"product_id"`
+	Question  string     `json:"question"`
+	GoldCause string     `json:"gold_cause"`
+	Source    string     `json:"source"` // real | synthetic | imported
+	Version   string     `json:"version"`
+	Tags      []string   `json:"tags"`
+	Alerts    []Alert    `json:"alerts"`
+	Logs      []Evidence `json:"logs"`
+	Assets    []Asset    `json:"assets"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 type ReplayRequest struct {
@@ -187,19 +187,32 @@ type ReplayRequest struct {
 }
 
 type ReplayResult struct {
-	ID             string          `json:"id"`
-	CaseID         string          `json:"case_id"`
-	Config         string          `json:"config"`
-	Model          string          `json:"model"`
-	Diagnosis      DiagnosisResult `json:"diagnosis"`
-	CauseCorrect   bool            `json:"cause_correct"`
-	Faithfulness   float64         `json:"faithfulness"`
-	Hallucination  bool            `json:"hallucination"`
-	Judged         bool            `json:"judged"`
-	DurationMS     int64           `json:"duration_ms"`
-	ToolFailures   int             `json:"tool_failures"`
-	CreatedBy      string          `json:"created_by"`
-	CreatedAt      time.Time       `json:"created_at"`
+	ID            string          `json:"id"`
+	CaseID        string          `json:"case_id"`
+	Config        string          `json:"config"`
+	Model         string          `json:"model"`
+	JudgeModel    string          `json:"judge_model"`
+	JudgeSource   string          `json:"judge_source"` // independent | self
+	Diagnosis     DiagnosisResult `json:"diagnosis"`
+	CauseCorrect  bool            `json:"cause_correct"`
+	Faithfulness  float64         `json:"faithfulness"`
+	Hallucination bool            `json:"hallucination"`
+	Judged        bool            `json:"judged"`
+	DurationMS    int64           `json:"duration_ms"`
+	ToolFailures  int             `json:"tool_failures"`
+	CreatedBy     string          `json:"created_by"`
+	CreatedAt     time.Time       `json:"created_at"`
+	ReviewStatus  string          `json:"review_status"` // pending | accepted | rejected
+	ReviewCause   *bool           `json:"review_cause,omitempty"`
+	ReviewNote    string          `json:"review_note"`
+	ReviewedBy    string          `json:"reviewed_by"`
+	ReviewedAt    time.Time       `json:"reviewed_at"`
+}
+
+type ReplayResultReviewRequest struct {
+	Accepted bool   `json:"accepted"`
+	CauseOK  bool   `json:"cause_ok"`
+	Note     string `json:"note"`
 }
 
 type IssueRequest struct {

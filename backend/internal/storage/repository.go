@@ -42,6 +42,8 @@ type Repository interface {
 	DeleteFaultCase(id string) error
 	CreateReplayResult(domain.ReplayResult) error
 	ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error)
+	GetReplayResult(id string) (domain.ReplayResult, error)
+	UpdateReplayResultReview(domain.ReplayResult) error
 
 	Close() error
 }

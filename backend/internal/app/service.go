@@ -17,6 +17,7 @@ import (
 type Service struct {
 	Tools      *tools.Service
 	LLM        *llm.Client
+	Judge      *llm.Client
 	Repo       storage.Repository
 	inspectMu  sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
 	approvalMu sync.Mutex // 串行化审批状态迁移，避免重复审批或执行

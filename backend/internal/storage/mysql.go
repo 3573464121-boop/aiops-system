@@ -169,6 +169,13 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			case_id VARCHAR(64) NOT NULL,
 			config VARCHAR(32) NOT NULL,
 			model VARCHAR(128) NOT NULL DEFAULT '',
+			judge_model VARCHAR(128) NOT NULL DEFAULT '',
+			judge_source VARCHAR(32) NOT NULL DEFAULT '',
+			review_status VARCHAR(16) NOT NULL DEFAULT 'pending',
+			review_cause TINYINT(1) NULL,
+			review_note VARCHAR(1000) NOT NULL DEFAULT '',
+			reviewed_by VARCHAR(64) NOT NULL DEFAULT '',
+			reviewed_at DATETIME NULL,
 			cause_correct TINYINT(1) NOT NULL,
 			faithfulness DOUBLE NOT NULL,
 			hallucination TINYINT(1) NOT NULL,
@@ -191,6 +198,13 @@ func (m *MySQL) migrate(ctx context.Context) error {
 		`ALTER TABLE audit_events ADD COLUMN user_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_events ADD COLUMN username VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_events ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT ''`,
+		`ALTER TABLE replay_results ADD COLUMN judge_model VARCHAR(128) NOT NULL DEFAULT ''`,
+		`ALTER TABLE replay_results ADD COLUMN judge_source VARCHAR(32) NOT NULL DEFAULT ''`,
+		`ALTER TABLE replay_results ADD COLUMN review_status VARCHAR(16) NOT NULL DEFAULT 'pending'`,
+		`ALTER TABLE replay_results ADD COLUMN review_cause TINYINT(1) NULL`,
+		`ALTER TABLE replay_results ADD COLUMN review_note VARCHAR(1000) NOT NULL DEFAULT ''`,
+		`ALTER TABLE replay_results ADD COLUMN reviewed_by VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE replay_results ADD COLUMN reviewed_at DATETIME NULL`,
 	} {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("audit_events alter migration failed: %w", err)
@@ -572,17 +586,29 @@ func (m *MySQL) CreateReplayResult(v domain.ReplayResult) error {
 	if err != nil {
 		return err
 	}
-	_, err = m.db.Exec(`INSERT INTO replay_results (id, case_id, config, model, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.CaseID, v.Config, v.Model, v.CauseCorrect, v.Faithfulness, v.Hallucination, v.Judged, v.DurationMS, v.ToolFailures, string(payload), v.CreatedBy, v.CreatedAt)
+	_, err = m.db.Exec(`INSERT INTO replay_results (id, case_id, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.CaseID, v.Config, v.Model, v.JudgeModel, v.JudgeSource, "pending", nil, "", "", nil, v.CauseCorrect, v.Faithfulness, v.Hallucination, v.Judged, v.DurationMS, v.ToolFailures, string(payload), v.CreatedBy, v.CreatedAt)
 	return err
 }
 
 func scanReplayResult(scanner approvalScanner) (domain.ReplayResult, error) {
 	var v domain.ReplayResult
 	var payload string
-	err := scanner.Scan(&v.ID, &v.CaseID, &v.Config, &v.Model, &v.CauseCorrect, &v.Faithfulness, &v.Hallucination, &v.Judged, &v.DurationMS, &v.ToolFailures, &payload, &v.CreatedBy, &v.CreatedAt)
+	var reviewCause sql.NullBool
+	var reviewedAt sql.NullTime
+	err := scanner.Scan(&v.ID, &v.CaseID, &v.Config, &v.Model, &v.JudgeModel, &v.JudgeSource, &v.ReviewStatus, &reviewCause, &v.ReviewNote, &v.ReviewedBy, &reviewedAt, &v.CauseCorrect, &v.Faithfulness, &v.Hallucination, &v.Judged, &v.DurationMS, &v.ToolFailures, &payload, &v.CreatedBy, &v.CreatedAt)
 	if err != nil {
 		return v, err
+	}
+	if reviewCause.Valid {
+		value := reviewCause.Bool
+		v.ReviewCause = &value
+	}
+	if reviewedAt.Valid {
+		v.ReviewedAt = reviewedAt.Time
+	}
+	if v.ReviewStatus == "" {
+		v.ReviewStatus = "pending"
 	}
 	if err := json.Unmarshal([]byte(payload), &v.Diagnosis); err != nil {
 		return v, err
@@ -594,7 +620,7 @@ func (m *MySQL) ListReplayResults(caseID string, limit int) ([]domain.ReplayResu
 	if limit <= 0 || limit > 5000 {
 		limit = 1000
 	}
-	columns := `id, case_id, config, model, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
+	columns := `id, case_id, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
 	var rows *sql.Rows
 	var err error
 	if caseID == "" {
@@ -615,6 +641,20 @@ func (m *MySQL) ListReplayResults(caseID string, limit int) ([]domain.ReplayResu
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (m *MySQL) GetReplayResult(id string) (domain.ReplayResult, error) {
+	columns := `id, case_id, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
+	return scanReplayResult(m.db.QueryRow(`SELECT `+columns+` FROM replay_results WHERE id = ?`, id))
+}
+
+func (m *MySQL) UpdateReplayResultReview(v domain.ReplayResult) error {
+	var cause any
+	if v.ReviewCause != nil {
+		cause = *v.ReviewCause
+	}
+	_, err := m.db.Exec(`UPDATE replay_results SET review_status=?, review_cause=?, review_note=?, reviewed_by=?, reviewed_at=? WHERE id=?`, v.ReviewStatus, cause, v.ReviewNote, v.ReviewedBy, nullTime(v.ReviewedAt), v.ID)
+	return err
 }
 
 func (m *MySQL) Close() error { return m.db.Close() }

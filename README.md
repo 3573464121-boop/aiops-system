@@ -20,6 +20,7 @@
 - 多模型。OpenAI 兼容接口，默认对接 DeepSeek，也可切换到本机 Ollama。
 - 控制台。Vue 3 + Ant Design，包含登录、仪表盘、运维助手、告警、知识库、工单、审计、记忆、巡检、资产、审批、数据源、实验记录和故障回放等页面。
 - 故障回放。导入版本化、脱敏的告警、日志与资产快照，使用完整系统、仅 BM25 和无 Agent 三组配置回放，持久化诊断结果与判官指标。
+- 独立判官。回放支持通过 `JUDGE_BASE_URL`、`JUDGE_API_KEY` 和 `JUDGE_MODEL` 配置独立评审模型，并记录判官来源；未配置时明确标记为自评。
 - 持久化。工单、审计、巡检、记忆、用户、审批单、诊断实验记录和回放结果均写入 MySQL，不可用时自动回退内存。
 
 ## 架构
@@ -157,6 +158,7 @@ GET  /api/v1/fault-cases/:id                   故障案例详情（仅管理员
 DELETE /api/v1/fault-cases/:id                 删除故障案例（仅管理员）
 POST /api/v1/fault-cases/:id/replay            运行对照回放（仅管理员）
 GET  /api/v1/replay-results?case_id=           回放结果（仅管理员）
+POST /api/v1/replay-results/:id/review         人工复核回放结果（仅管理员）
 GET  /api/v1/audits
 ```
 

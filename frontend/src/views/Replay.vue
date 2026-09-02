@@ -11,6 +11,10 @@ const loading = ref(false)
 const running = ref(false)
 const importOpen = ref(false)
 const importing = ref(false)
+const reviewOpen = ref(false)
+const reviewing = ref(false)
+const reviewTarget = ref(null)
+const reviewForm = ref({ accepted: true, cause_ok: true, note: '' })
 const configs = ref(['full', 'bm25', 'no-agent'])
 const jsonText = ref('')
 const fileInput = ref(null)
@@ -22,10 +26,11 @@ const columns = [
   { title: '操作', key: 'ops', width: 155 },
 ]
 const resultColumns = [
+	{ title: '复核', key: 'review', width: 95 },
   { title: '配置', key: 'config', width: 120 }, { title: '根因正确', key: 'cause', width: 105 },
   { title: '忠实度', key: 'faith', width: 95 }, { title: '幻觉', key: 'hallucination', width: 85 },
   { title: '证据数', key: 'evidence', width: 80 }, { title: '工具失败', dataIndex: 'tool_failures', width: 95 },
-  { title: '耗时', key: 'duration', width: 95 }, { title: '诊断结论', key: 'summary' },
+  { title: '耗时', key: 'duration', width: 95 }, { title: '判官', key: 'judge', width: 100 }, { title: '诊断结论', key: 'summary' },
 ]
 
 const selectedResults = computed(() => selected.value ? results.value.filter(v => v.case_id === selected.value.id) : [])
@@ -96,6 +101,23 @@ function removeCase(record) {
     async onOk() { await api(`/fault-cases/${record.id}`, { method: 'DELETE' }); selected.value = null; await load() },
   })
 }
+function openReview(record) {
+  reviewTarget.value = record
+  reviewForm.value = { accepted: record.review_status === 'accepted', cause_ok: record.review_cause ?? record.cause_correct, note: record.review_note || '' }
+  reviewOpen.value = true
+}
+async function review() {
+  if (!reviewForm.value.note.trim()) { message.warning('请填写人工复核说明'); return }
+  reviewing.value = true
+  try {
+    const updated = await api(`/replay-results/${reviewTarget.value.id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reviewForm.value) })
+    const index = results.value.findIndex(v => v.id === updated.id)
+    if (index >= 0) results.value[index] = updated
+    reviewOpen.value = false
+    message.success('人工复核已保存')
+  } catch (e) { message.error(e.message) }
+  finally { reviewing.value = false }
+}
 onMounted(load)
 </script>
 
@@ -136,6 +158,8 @@ onMounted(load)
             <template v-else-if="column.key === 'hallucination'"><a-tag :color="record.hallucination ? 'red' : 'green'">{{ record.judged ? (record.hallucination ? '有' : '无') : '-' }}</a-tag></template>
             <template v-else-if="column.key === 'evidence'">{{ record.diagnosis.evidence.length }}</template>
             <template v-else-if="column.key === 'duration'">{{ (record.duration_ms / 1000).toFixed(1) }}s</template>
+            <template v-else-if="column.key === 'judge'"><a-tag :color="record.judge_source === 'independent' ? 'green' : 'gold'">{{ record.judge_source === 'independent' ? '独立' : '自评' }}</a-tag></template>
+            <template v-else-if="column.key === 'review'"><a-button type="link" size="small" @click="openReview(record)">{{ record.review_status === 'accepted' ? '已采纳' : record.review_status === 'rejected' ? '已驳回' : '复核' }}</a-button></template>
             <template v-else-if="column.key === 'summary'"><span class="summary-text">{{ record.diagnosis.summary }}</span></template>
           </template>
           <template #emptyText>选择配置并运行后显示对照结果</template>
@@ -146,6 +170,14 @@ onMounted(load)
       <div class="import-tools"><span>粘贴案例 JSON，或选择 UTF-8 JSON 文件。</span><a-button @click="fileInput?.click()"><UploadOutlined />选择文件</a-button><input ref="fileInput" type="file" accept="application/json,.json" hidden @change="readFile" /></div>
       <a-textarea v-model:value="jsonText" :rows="20" class="json-editor" spellcheck="false" />
       <a-alert type="warning" show-icon message="真实案例必须移除账号、客户名称、公网地址和密钥等敏感信息。" />
+    </a-modal>
+    <a-modal v-model:open="reviewOpen" title="人工复核回放结果" :confirm-loading="reviewing" ok-text="保存复核" cancel-text="取消" @ok="review">
+      <a-alert type="info" show-icon :message="reviewTarget?.diagnosis?.summary" style="margin-bottom: 16px" />
+      <a-form layout="vertical">
+        <a-form-item label="是否纳入论文数据集"><a-switch v-model:checked="reviewForm.accepted" checked-children="纳入" un-checked-children="不纳入" /></a-form-item>
+        <a-form-item label="人工确认根因是否正确"><a-radio-group v-model:value="reviewForm.cause_ok"><a-radio :value="true">正确</a-radio><a-radio :value="false">不正确</a-radio></a-radio-group></a-form-item>
+        <a-form-item label="复核说明" required><a-textarea v-model:value="reviewForm.note" :rows="4" placeholder="说明判断依据、与标准根因的关系以及是否存在证据不足" /></a-form-item>
+      </a-form>
     </a-modal>
   </div>
 </template>

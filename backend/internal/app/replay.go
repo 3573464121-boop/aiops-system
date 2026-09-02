@@ -126,6 +126,28 @@ func (s *Service) ListReplayResults(caseID string, limit int) ([]domain.ReplayRe
 	return s.Repo.ListReplayResults(strings.TrimSpace(caseID), limit)
 }
 
+func (s *Service) ReviewReplayResult(ctx context.Context, id string, req domain.ReplayResultReviewRequest) (domain.ReplayResult, error) {
+	v, err := s.Repo.GetReplayResult(strings.TrimSpace(id))
+	if err != nil {
+		return domain.ReplayResult{}, err
+	}
+	if strings.TrimSpace(req.Note) == "" {
+		return domain.ReplayResult{}, fmt.Errorf("人工复核必须填写说明")
+	}
+	_, username, _ := actorFromContext(ctx)
+	value := req.CauseOK
+	v.ReviewStatus = "rejected"
+	if req.Accepted {
+		v.ReviewStatus = "accepted"
+	}
+	v.ReviewCause, v.ReviewNote, v.ReviewedBy, v.ReviewedAt = &value, strings.TrimSpace(req.Note), username, time.Now()
+	if err := s.Repo.UpdateReplayResultReview(v); err != nil {
+		return domain.ReplayResult{}, err
+	}
+	s.addAudit(ctx, "review_replay_result", v.Diagnosis.ProductID, "success", 0)
+	return v, nil
+}
+
 func (s *Service) ReplayFaultCase(ctx context.Context, id string, req domain.ReplayRequest) ([]domain.ReplayResult, error) {
 	if s.LLM == nil || !s.LLM.Enabled() {
 		return nil, fmt.Errorf("回放实验需要配置可用的大模型")
@@ -148,6 +170,7 @@ func (s *Service) ReplayFaultCase(ctx context.Context, id string, req domain.Rep
 		result.ID = fmt.Sprintf("REPLAY-%d", time.Now().UnixNano())
 		result.CaseID, result.Config, result.Model = c.ID, config, s.LLM.Model
 		result.CreatedBy, result.CreatedAt = username, time.Now()
+		result.JudgeModel, result.JudgeSource = s.judgeInfo()
 		result.Faithfulness, result.Hallucination, result.CauseCorrect, result.Judged = s.judgeReplay(ctx, c, result.Diagnosis)
 		if err := s.Repo.CreateReplayResult(result); err != nil {
 			s.addAudit(ctx, "replay_fault_case", c.ProductID, "error", result.DurationMS)
@@ -157,6 +180,16 @@ func (s *Service) ReplayFaultCase(ctx context.Context, id string, req domain.Rep
 	}
 	s.addAudit(ctx, "replay_fault_case", c.ProductID, "success", 0)
 	return results, nil
+}
+
+func (s *Service) judgeInfo() (string, string) {
+	if s.Judge != nil && s.Judge.Enabled() {
+		return s.Judge.Model, "independent"
+	}
+	if s.LLM != nil {
+		return s.LLM.Model, "self"
+	}
+	return "", "unavailable"
 }
 
 func normalizeReplayConfigs(configs []string) ([]string, error) {
@@ -225,6 +258,13 @@ func (s *Service) runNoAgentReplay(ctx context.Context, c domain.FaultCase) doma
 }
 
 func (s *Service) judgeReplay(ctx context.Context, c domain.FaultCase, diagnosis domain.DiagnosisResult) (float64, bool, bool, bool) {
+	judgeClient := s.LLM
+	if s.Judge != nil && s.Judge.Enabled() {
+		judgeClient = s.Judge
+	}
+	if judgeClient == nil || !judgeClient.Enabled() {
+		return 0, false, false, false
+	}
 	var evidence strings.Builder
 	for i, e := range diagnosis.Evidence {
 		fmt.Fprintf(&evidence, "%d. [%s] %s\n", i+1, e.Title, e.Content)
@@ -236,7 +276,7 @@ func (s *Service) judgeReplay(ctx context.Context, c domain.FaultCase, diagnosis
 	system := `你是严格的运维诊断评审。只输出 JSON 对象：{"faithfulness":0.0,"has_hallucination":false,"cause_correct":false}。faithfulness 表示诊断论断被可用证据支持的比例；没有证据却给出具体断言应判为低忠实度和存在幻觉；cause_correct 仅在诊断识别出标准根因的核心机理时为 true。`
 	judgeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	msg, err := s.LLM.Chat(judgeCtx, []llm.Message{{Role: "system", Content: system}, {Role: "user", Content: payload}}, nil, true)
+	msg, err := judgeClient.Chat(judgeCtx, []llm.Message{{Role: "system", Content: system}, {Role: "user", Content: payload}}, nil, true)
 	if err != nil || msg == nil {
 		return 0, false, false, false
 	}

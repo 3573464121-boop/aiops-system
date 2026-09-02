@@ -84,6 +84,12 @@ func main() {
 
 	llmClient := &llm.Client{BaseURL: os.Getenv("LLM_BASE_URL"), APIKey: os.Getenv("LLM_API_KEY"), Model: os.Getenv("LLM_MODEL")}
 	service := app.New(toolService, llmClient, repo)
+	if judgeURL := strings.TrimSpace(os.Getenv("JUDGE_BASE_URL")); judgeURL != "" {
+		service.Judge = &llm.Client{BaseURL: judgeURL, APIKey: os.Getenv("JUDGE_API_KEY"), Model: env("JUDGE_MODEL", llmClient.Model)}
+		log.Printf("独立判官已配置: %s", service.Judge.Model)
+	} else {
+		log.Printf("独立判官未配置，回放将使用被测模型自评；正式实验建议配置 JUDGE_BASE_URL")
+	}
 
 	// 认证：HMAC 令牌签发器 + 首次启动时播种管理员账号。
 	secret := strings.TrimSpace(os.Getenv("AUTH_SECRET"))

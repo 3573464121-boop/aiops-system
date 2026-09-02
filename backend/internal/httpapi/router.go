@@ -527,6 +527,19 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		}
 		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
 	})
+	api.POST("/replay-results/:id/review", requireAdmin, func(c *gin.Context) {
+		var req domain.ReplayResultReviewRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.ReviewReplayResult(c.Request.Context(), c.Param("id"), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
 	api.GET("/audits", func(c *gin.Context) {
 		v, err := s.Audits()
 		if err != nil {

@@ -307,5 +307,26 @@ func (m *Memory) ListReplayResults(caseID string, limit int) ([]domain.ReplayRes
 	}
 	return out, nil
 }
+func (m *Memory) GetReplayResult(id string) (domain.ReplayResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, v := range m.replays {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return domain.ReplayResult{}, fmt.Errorf("回放结果不存在: %s", id)
+}
+func (m *Memory) UpdateReplayResultReview(v domain.ReplayResult) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.replays {
+		if m.replays[i].ID == v.ID {
+			m.replays[i] = v
+			return nil
+		}
+	}
+	return fmt.Errorf("回放结果不存在: %s", v.ID)
+}
 
 func (m *Memory) Close() error { return nil }
