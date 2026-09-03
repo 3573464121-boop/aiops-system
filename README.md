@@ -21,6 +21,8 @@
 - 控制台。Vue 3 + Ant Design，包含登录、仪表盘、运维助手、告警、知识库、工单、审计、记忆、巡检、资产、审批、数据源、实验记录和故障回放等页面。
 - 故障回放。导入版本化、脱敏的告警、日志与资产快照，使用完整系统、仅 BM25 和无 Agent 三组配置回放，持久化诊断结果与判官指标。
 - 独立判官。回放支持通过 `JUDGE_BASE_URL`、`JUDGE_API_KEY` 和 `JUDGE_MODEL` 配置独立评审模型，并记录判官来源；未配置时明确标记为自评。
+- 实验质量控制。自动标记判官指标冲突，只有经人工复核采纳的回放结果才能从页面导出为 JSON 或 CSV。
+- 实验批次。可在页面选择多个案例、对照配置和重复次数，后台串行执行并持久化进度、失败数、模型与判官快照。
 - 持久化。工单、审计、巡检、记忆、用户、审批单、诊断实验记录和回放结果均写入 MySQL，不可用时自动回退内存。
 
 ## 架构
@@ -44,6 +46,7 @@ LLM (OpenAI 兼容) 基于收集到的证据 + 召回的长期记忆产出结构
 backend/
   cmd/server/        服务入口，按环境变量选择数据源与存储
   cmd/eval/          诊断质量评测程序
+  cmd/casegen/       将评测集转换为可批量导入的回放案例
   internal/
     app/             诊断编排：工具循环、流式、审批、巡检、记忆、认证、实验留档
     auth/            HMAC 签名登录令牌的签发与校验
@@ -105,6 +108,8 @@ npm run dev                # 默认 http://localhost:5173
 
 `backend/cmd/eval` 是一个可复现的评测程序，在同一批带标准答案的故障案例上对比三种配置：完整的智能体（工具循环 + 向量 RAG）、仅用 BM25 的智能体、以及不调用任何工具的纯模型问答。10 个案例的一次结果：
 
+回放平台的独立判官实验见 `backend/eval/replay-report-v1.md`；固定输入数据为 `backend/eval/replay-dataset-v1.json`。
+
 | 配置 | 根因准确率 | 证据召回 | 知识命中 | 忠实度 | 幻觉率 |
 |---|---|---|---|---|---|
 | 智能体 + 向量 RAG | 100% | 100% | 100% | 0.93 | 0% |
@@ -154,17 +159,20 @@ GET  /api/v1/diagnosis-runs                    诊断实验记录（仅管理员
 POST /api/v1/diagnosis-runs/:id/review         复核并标注标准根因（仅管理员）
 GET  /api/v1/fault-cases                       故障案例列表（仅管理员）
 POST /api/v1/fault-cases                       导入故障案例（仅管理员）
+POST /api/v1/fault-cases/bulk                  批量导入故障案例（仅管理员，最多 500 条）
 GET  /api/v1/fault-cases/:id                   故障案例详情（仅管理员）
 DELETE /api/v1/fault-cases/:id                 删除故障案例（仅管理员）
 POST /api/v1/fault-cases/:id/replay            运行对照回放（仅管理员）
 GET  /api/v1/replay-results?case_id=           回放结果（仅管理员）
 POST /api/v1/replay-results/:id/review         人工复核回放结果（仅管理员）
+GET  /api/v1/experiment-batches                实验批次与进度（仅管理员）
+POST /api/v1/experiment-batches                创建并后台运行实验批次（仅管理员）
 GET  /api/v1/audits
 ```
 
 ## 现状与后续
 
-已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、数据源检测、向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入与对照回放、资产管理（CMDB）、主动巡检、记忆空间、认证与角色权限、操作人审计、高风险处置审批闭环。
+已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、数据源检测、向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入、对照回放与实验批次、资产管理（CMDB）、主动巡检、记忆空间、认证与角色权限、操作人审计、高风险处置审批闭环。
 
 计划中：
 

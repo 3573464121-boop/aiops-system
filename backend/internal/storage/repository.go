@@ -41,9 +41,13 @@ type Repository interface {
 	GetFaultCase(id string) (domain.FaultCase, error)
 	DeleteFaultCase(id string) error
 	CreateReplayResult(domain.ReplayResult) error
-	ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error)
+	ListReplayResults(caseID, batchID string, limit int) ([]domain.ReplayResult, error)
 	GetReplayResult(id string) (domain.ReplayResult, error)
 	UpdateReplayResultReview(domain.ReplayResult) error
+	CreateExperimentBatch(domain.ExperimentBatch) error
+	ListExperimentBatches(limit int) ([]domain.ExperimentBatch, error)
+	GetExperimentBatch(id string) (domain.ExperimentBatch, error)
+	UpdateExperimentBatch(domain.ExperimentBatch) error
 
 	Close() error
 }

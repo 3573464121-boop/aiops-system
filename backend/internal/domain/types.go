@@ -186,9 +186,38 @@ type ReplayRequest struct {
 	Configs []string `json:"configs"` // full | bm25 | no-agent
 }
 
+type ExperimentBatchRequest struct {
+	Name    string   `json:"name" binding:"required"`
+	CaseIDs []string `json:"case_ids" binding:"required"`
+	Configs []string `json:"configs" binding:"required"`
+	Repeats int      `json:"repeats"`
+}
+
+type ExperimentBatch struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	CaseIDs       []string  `json:"case_ids"`
+	Configs       []string  `json:"configs"`
+	Repeats       int       `json:"repeats"`
+	Model         string    `json:"model"`
+	JudgeModel    string    `json:"judge_model"`
+	JudgeSource   string    `json:"judge_source"`
+	KnowledgeMode string    `json:"knowledge_mode"`
+	Status        string    `json:"status"` // pending | running | completed | failed
+	TotalRuns     int       `json:"total_runs"`
+	CompletedRuns int       `json:"completed_runs"`
+	FailedRuns    int       `json:"failed_runs"`
+	Error         string    `json:"error"`
+	CreatedBy     string    `json:"created_by"`
+	CreatedAt     time.Time `json:"created_at"`
+	CompletedAt   time.Time `json:"completed_at"`
+}
+
 type ReplayResult struct {
 	ID            string          `json:"id"`
 	CaseID        string          `json:"case_id"`
+	BatchID       string          `json:"batch_id"`
+	Trial         int             `json:"trial"`
 	Config        string          `json:"config"`
 	Model         string          `json:"model"`
 	JudgeModel    string          `json:"judge_model"`
@@ -207,6 +236,8 @@ type ReplayResult struct {
 	ReviewNote    string          `json:"review_note"`
 	ReviewedBy    string          `json:"reviewed_by"`
 	ReviewedAt    time.Time       `json:"reviewed_at"`
+	QualityStatus string          `json:"quality_status"` // pass | warning
+	QualityIssues []string        `json:"quality_issues"`
 }
 
 type ReplayResultReviewRequest struct {

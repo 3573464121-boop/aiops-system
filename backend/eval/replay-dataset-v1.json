@@ -1,0 +1,740 @@
+[
+  {
+    "name": "payment-1 分析支付服务最近30分钟的高错误率告警",
+    "product_id": "payment",
+    "question": "分析支付服务最近30分钟的高错误率告警",
+    "gold_cause": "下游库存服务(inventory-service)响应超时，导致支付请求积压、连接池接近耗尽，引发错误率与响应延迟升高",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "payment-1",
+      "payment"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24001",
+        "product_id": "payment",
+        "rule": "支付接口错误率过高",
+        "severity": 1,
+        "target": "payment-api-01",
+        "value": "error_rate=8.7%",
+        "triggered_at": "2026-09-02T16:08:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24002",
+        "product_id": "payment",
+        "rule": "P95响应时间过高",
+        "severity": 2,
+        "target": "payment-api-02",
+        "value": "p95=3.8s",
+        "triggered_at": "2026-09-02T16:11:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "payment-api timeout",
+        "content": "upstream inventory-service timeout after 3000ms; pending_requests=182",
+        "score": 0.94,
+        "source": "demo://logs/payment-api"
+      },
+      {
+        "type": "log",
+        "title": "connection pool wait",
+        "content": "db pool wait duration p95=812ms, active=48, max=50",
+        "score": 0.81,
+        "source": "demo://logs/payment-db"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-p01",
+        "product_id": "payment",
+        "kind": "server",
+        "name": "payment-api-01",
+        "ip": "10.0.1.11",
+        "detail": "支付接口服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-p02",
+        "product_id": "payment",
+        "kind": "server",
+        "name": "payment-api-02",
+        "ip": "10.0.1.12",
+        "detail": "支付接口服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "db-p01",
+        "product_id": "payment",
+        "kind": "db",
+        "name": "payment-db",
+        "ip": "10.0.1.30",
+        "detail": "MySQL 主库 :3306",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "payment-2 支付接口P95响应时间变慢，帮我定位根因",
+    "product_id": "payment",
+    "question": "支付接口P95响应时间变慢，帮我定位根因",
+    "gold_cause": "下游库存服务响应超时导致支付调用变慢、连接池等待增加，P95 响应时间升高",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "payment-2",
+      "payment"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24001",
+        "product_id": "payment",
+        "rule": "支付接口错误率过高",
+        "severity": 1,
+        "target": "payment-api-01",
+        "value": "error_rate=8.7%",
+        "triggered_at": "2026-09-02T16:08:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24002",
+        "product_id": "payment",
+        "rule": "P95响应时间过高",
+        "severity": 2,
+        "target": "payment-api-02",
+        "value": "p95=3.8s",
+        "triggered_at": "2026-09-02T16:11:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "payment-api timeout",
+        "content": "upstream inventory-service timeout after 3000ms; pending_requests=182",
+        "score": 0.94,
+        "source": "demo://logs/payment-api"
+      },
+      {
+        "type": "log",
+        "title": "connection pool wait",
+        "content": "db pool wait duration p95=812ms, active=48, max=50",
+        "score": 0.81,
+        "source": "demo://logs/payment-db"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-p01",
+        "product_id": "payment",
+        "kind": "server",
+        "name": "payment-api-01",
+        "ip": "10.0.1.11",
+        "detail": "支付接口服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-p02",
+        "product_id": "payment",
+        "kind": "server",
+        "name": "payment-api-02",
+        "ip": "10.0.1.12",
+        "detail": "支付接口服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "db-p01",
+        "product_id": "payment",
+        "kind": "db",
+        "name": "payment-db",
+        "ip": "10.0.1.30",
+        "detail": "MySQL 主库 :3306",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "inventory-1 inventory-03 实例存活异常，帮我排查",
+    "product_id": "inventory",
+    "question": "inventory-03 实例存活异常，帮我排查",
+    "gold_cause": "JVM 老年代增长过快、频繁 Full GC 长时间停顿，导致健康检查超时、实例被判定存活异常",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "inventory-1",
+      "inventory"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24003",
+        "product_id": "inventory",
+        "rule": "实例存活异常",
+        "severity": 1,
+        "target": "inventory-03",
+        "value": "up=0",
+        "triggered_at": "2026-09-02T16:16:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24004",
+        "product_id": "inventory",
+        "rule": "JVM 老年代使用率过高",
+        "severity": 2,
+        "target": "inventory-01",
+        "value": "old_gen=94%",
+        "triggered_at": "2026-09-02T16:13:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "inventory GC pause",
+        "content": "Full GC (Ergonomics) 1.84s, old gen 94%-\u003e91%; frequent full gc detected",
+        "score": 0.9,
+        "source": "demo://logs/inventory-jvm"
+      },
+      {
+        "type": "log",
+        "title": "health check fail",
+        "content": "liveness probe failed: HTTP 500 from /healthz; instance inventory-03 restarting",
+        "score": 0.86,
+        "source": "demo://logs/inventory-03"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-i01",
+        "product_id": "inventory",
+        "kind": "server",
+        "name": "inventory-01",
+        "ip": "10.0.2.11",
+        "detail": "库存服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-i03",
+        "product_id": "inventory",
+        "kind": "server",
+        "name": "inventory-03",
+        "ip": "10.0.2.13",
+        "detail": "库存服务",
+        "env": "prod",
+        "status": "offline"
+      },
+      {
+        "id": "db-i01",
+        "product_id": "inventory",
+        "kind": "db",
+        "name": "inventory-db",
+        "ip": "10.0.2.30",
+        "detail": "MySQL :3306",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "inventory-2 库存服务 JVM 老年代使用率过高是什么原因",
+    "product_id": "inventory",
+    "question": "库存服务 JVM 老年代使用率过高是什么原因",
+    "gold_cause": "老年代对象增长过快、频繁 Full GC，存在内存压力或内存泄漏风险",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "inventory-2",
+      "inventory"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24003",
+        "product_id": "inventory",
+        "rule": "实例存活异常",
+        "severity": 1,
+        "target": "inventory-03",
+        "value": "up=0",
+        "triggered_at": "2026-09-02T16:16:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24004",
+        "product_id": "inventory",
+        "rule": "JVM 老年代使用率过高",
+        "severity": 2,
+        "target": "inventory-01",
+        "value": "old_gen=94%",
+        "triggered_at": "2026-09-02T16:13:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "inventory GC pause",
+        "content": "Full GC (Ergonomics) 1.84s, old gen 94%-\u003e91%; frequent full gc detected",
+        "score": 0.9,
+        "source": "demo://logs/inventory-jvm"
+      },
+      {
+        "type": "log",
+        "title": "health check fail",
+        "content": "liveness probe failed: HTTP 500 from /healthz; instance inventory-03 restarting",
+        "score": 0.86,
+        "source": "demo://logs/inventory-03"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-i01",
+        "product_id": "inventory",
+        "kind": "server",
+        "name": "inventory-01",
+        "ip": "10.0.2.11",
+        "detail": "库存服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-i03",
+        "product_id": "inventory",
+        "kind": "server",
+        "name": "inventory-03",
+        "ip": "10.0.2.13",
+        "detail": "库存服务",
+        "env": "prod",
+        "status": "offline"
+      },
+      {
+        "id": "db-i01",
+        "product_id": "inventory",
+        "kind": "db",
+        "name": "inventory-db",
+        "ip": "10.0.2.30",
+        "detail": "MySQL :3306",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "order-1 订单创建超时率上升，什么原因",
+    "product_id": "order",
+    "question": "订单创建超时率上升，什么原因",
+    "gold_cause": "下游支付服务调用超时，导致订单创建链路超时率上升",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "order-1",
+      "order"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24005",
+        "product_id": "order",
+        "rule": "订单创建超时率上升",
+        "severity": 2,
+        "target": "order-api-02",
+        "value": "timeout_rate=5.2%",
+        "triggered_at": "2026-09-02T16:05:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24006",
+        "product_id": "order",
+        "rule": "消息队列消费积压",
+        "severity": 3,
+        "target": "order-consumer-01",
+        "value": "lag=12000",
+        "triggered_at": "2026-09-02T16:00:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "order create timeout",
+        "content": "call payment-service timeout 2000ms while creating order; retry=2",
+        "score": 0.88,
+        "source": "demo://logs/order-api"
+      },
+      {
+        "type": "log",
+        "title": "kafka consumer lag",
+        "content": "consumer group order-consumer lag=12000, rebalancing frequently",
+        "score": 0.8,
+        "source": "demo://logs/order-mq"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-o02",
+        "product_id": "order",
+        "kind": "server",
+        "name": "order-api-02",
+        "ip": "10.0.3.12",
+        "detail": "订单接口服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-oc01",
+        "product_id": "order",
+        "kind": "server",
+        "name": "order-consumer-01",
+        "ip": "10.0.3.21",
+        "detail": "订单消息消费者",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "db-o01",
+        "product_id": "order",
+        "kind": "db",
+        "name": "order-db",
+        "ip": "10.0.3.30",
+        "detail": "MySQL :3306",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "order-2 订单消息队列消费积压严重，帮我分析",
+    "product_id": "order",
+    "question": "订单消息队列消费积压严重，帮我分析",
+    "gold_cause": "消息队列消费者反复 rebalance、消费停滞，导致消息大量积压(lag 升高)",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "order-2",
+      "order"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24005",
+        "product_id": "order",
+        "rule": "订单创建超时率上升",
+        "severity": 2,
+        "target": "order-api-02",
+        "value": "timeout_rate=5.2%",
+        "triggered_at": "2026-09-02T16:05:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24006",
+        "product_id": "order",
+        "rule": "消息队列消费积压",
+        "severity": 3,
+        "target": "order-consumer-01",
+        "value": "lag=12000",
+        "triggered_at": "2026-09-02T16:00:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "order create timeout",
+        "content": "call payment-service timeout 2000ms while creating order; retry=2",
+        "score": 0.88,
+        "source": "demo://logs/order-api"
+      },
+      {
+        "type": "log",
+        "title": "kafka consumer lag",
+        "content": "consumer group order-consumer lag=12000, rebalancing frequently",
+        "score": 0.8,
+        "source": "demo://logs/order-mq"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-o02",
+        "product_id": "order",
+        "kind": "server",
+        "name": "order-api-02",
+        "ip": "10.0.3.12",
+        "detail": "订单接口服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-oc01",
+        "product_id": "order",
+        "kind": "server",
+        "name": "order-consumer-01",
+        "ip": "10.0.3.21",
+        "detail": "订单消息消费者",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "db-o01",
+        "product_id": "order",
+        "kind": "db",
+        "name": "order-db",
+        "ip": "10.0.3.30",
+        "detail": "MySQL :3306",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "gateway-1 网关出现大量 5xx，帮我分析原因",
+    "product_id": "gateway",
+    "question": "网关出现大量 5xx，帮我分析原因",
+    "gold_cause": "上游订单服务不可用或拒绝连接，网关回源失败返回 5xx/502",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "gateway-1",
+      "gateway"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24007",
+        "product_id": "gateway",
+        "rule": "网关 5xx 突增",
+        "severity": 1,
+        "target": "gateway-02",
+        "value": "5xx_qps=340",
+        "triggered_at": "2026-09-02T16:17:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24008",
+        "product_id": "gateway",
+        "rule": "上游连接被拒绝",
+        "severity": 3,
+        "target": "gateway-01",
+        "value": "conn_refused=57",
+        "triggered_at": "2026-09-02T16:14:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "gateway 502",
+        "content": "502 Bad Gateway upstream=order-api connect timeout; 340 req/s failing",
+        "score": 0.92,
+        "source": "demo://logs/gateway"
+      },
+      {
+        "type": "log",
+        "title": "upstream connection refused",
+        "content": "dial tcp order-api:8080: connect: connection refused (x57)",
+        "score": 0.84,
+        "source": "demo://logs/gateway"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-g01",
+        "product_id": "gateway",
+        "kind": "server",
+        "name": "gateway-01",
+        "ip": "10.0.0.11",
+        "detail": "API 网关",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-g02",
+        "product_id": "gateway",
+        "kind": "server",
+        "name": "gateway-02",
+        "ip": "10.0.0.12",
+        "detail": "API 网关",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "gateway-2 gateway 上游连接被拒绝是什么问题",
+    "product_id": "gateway",
+    "question": "gateway 上游连接被拒绝是什么问题",
+    "gold_cause": "上游订单服务拒绝连接/不可用，网关回源失败",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "gateway-2",
+      "gateway"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24007",
+        "product_id": "gateway",
+        "rule": "网关 5xx 突增",
+        "severity": 1,
+        "target": "gateway-02",
+        "value": "5xx_qps=340",
+        "triggered_at": "2026-09-02T16:17:42.869402+08:00"
+      },
+      {
+        "id": "ALT-24008",
+        "product_id": "gateway",
+        "rule": "上游连接被拒绝",
+        "severity": 3,
+        "target": "gateway-01",
+        "value": "conn_refused=57",
+        "triggered_at": "2026-09-02T16:14:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "gateway 502",
+        "content": "502 Bad Gateway upstream=order-api connect timeout; 340 req/s failing",
+        "score": 0.92,
+        "source": "demo://logs/gateway"
+      },
+      {
+        "type": "log",
+        "title": "upstream connection refused",
+        "content": "dial tcp order-api:8080: connect: connection refused (x57)",
+        "score": 0.84,
+        "source": "demo://logs/gateway"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-g01",
+        "product_id": "gateway",
+        "kind": "server",
+        "name": "gateway-01",
+        "ip": "10.0.0.11",
+        "detail": "API 网关",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "srv-g02",
+        "product_id": "gateway",
+        "kind": "server",
+        "name": "gateway-02",
+        "ip": "10.0.0.12",
+        "detail": "API 网关",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "user-1 用户登录失败率升高，排查一下原因",
+    "product_id": "user",
+    "question": "用户登录失败率升高，排查一下原因",
+    "gold_cause": "会话缓存(Redis)访问超时，鉴权降级拒绝，导致登录失败率升高",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "user-1",
+      "user"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24009",
+        "product_id": "user",
+        "rule": "登录失败率升高",
+        "severity": 2,
+        "target": "user-api-03",
+        "value": "login_fail=14%",
+        "triggered_at": "2026-09-02T16:09:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "session redis timeout",
+        "content": "redis GET session timeout 200ms; auth fallback rejected login",
+        "score": 0.83,
+        "source": "demo://logs/user-api"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-u03",
+        "product_id": "user",
+        "kind": "server",
+        "name": "user-api-03",
+        "ip": "10.0.4.13",
+        "detail": "用户服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "cache-u01",
+        "product_id": "user",
+        "kind": "db",
+        "name": "session-redis",
+        "ip": "10.0.4.30",
+        "detail": "Redis 会话缓存 :6379",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  },
+  {
+    "name": "user-2 最近登录经常失败是怎么回事",
+    "product_id": "user",
+    "question": "最近登录经常失败是怎么回事",
+    "gold_cause": "会话缓存(Redis)访问超时导致鉴权失败、登录失败率上升",
+    "source": "synthetic",
+    "version": "eval-v1",
+    "tags": [
+      "evaluation",
+      "user-2",
+      "user"
+    ],
+    "alerts": [
+      {
+        "id": "ALT-24009",
+        "product_id": "user",
+        "rule": "登录失败率升高",
+        "severity": 2,
+        "target": "user-api-03",
+        "value": "login_fail=14%",
+        "triggered_at": "2026-09-02T16:09:42.869402+08:00"
+      }
+    ],
+    "logs": [
+      {
+        "type": "log",
+        "title": "session redis timeout",
+        "content": "redis GET session timeout 200ms; auth fallback rejected login",
+        "score": 0.83,
+        "source": "demo://logs/user-api"
+      }
+    ],
+    "assets": [
+      {
+        "id": "srv-u03",
+        "product_id": "user",
+        "kind": "server",
+        "name": "user-api-03",
+        "ip": "10.0.4.13",
+        "detail": "用户服务",
+        "env": "prod",
+        "status": "online"
+      },
+      {
+        "id": "cache-u01",
+        "product_id": "user",
+        "kind": "db",
+        "name": "session-redis",
+        "ip": "10.0.4.30",
+        "detail": "Redis 会话缓存 :6379",
+        "env": "prod",
+        "status": "online"
+      }
+    ]
+  }
+]

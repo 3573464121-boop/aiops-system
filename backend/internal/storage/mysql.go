@@ -167,6 +167,8 @@ func (m *MySQL) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS replay_results (
 			id VARCHAR(64) PRIMARY KEY,
 			case_id VARCHAR(64) NOT NULL,
+			batch_id VARCHAR(64) NOT NULL DEFAULT '',
+			trial INT NOT NULL DEFAULT 1,
 			config VARCHAR(32) NOT NULL,
 			model VARCHAR(128) NOT NULL DEFAULT '',
 			judge_model VARCHAR(128) NOT NULL DEFAULT '',
@@ -188,6 +190,27 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			INDEX idx_replay_case_created (case_id, created_at),
 			INDEX idx_replay_config_created (config, created_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS experiment_batches (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			case_ids LONGTEXT NOT NULL,
+			configs LONGTEXT NOT NULL,
+			repeats INT NOT NULL,
+			model VARCHAR(128) NOT NULL DEFAULT '',
+			judge_model VARCHAR(128) NOT NULL DEFAULT '',
+			judge_source VARCHAR(32) NOT NULL DEFAULT '',
+			knowledge_mode VARCHAR(64) NOT NULL DEFAULT '',
+			status VARCHAR(16) NOT NULL,
+			total_runs INT NOT NULL,
+			completed_runs INT NOT NULL DEFAULT 0,
+			failed_runs INT NOT NULL DEFAULT 0,
+			error_text VARCHAR(1000) NOT NULL DEFAULT '',
+			created_by VARCHAR(64) NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			completed_at DATETIME NULL,
+			INDEX idx_batches_created (created_at),
+			INDEX idx_batches_status_created (status, created_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, statement := range statements {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil {
@@ -205,6 +228,8 @@ func (m *MySQL) migrate(ctx context.Context) error {
 		`ALTER TABLE replay_results ADD COLUMN review_note VARCHAR(1000) NOT NULL DEFAULT ''`,
 		`ALTER TABLE replay_results ADD COLUMN reviewed_by VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE replay_results ADD COLUMN reviewed_at DATETIME NULL`,
+		`ALTER TABLE replay_results ADD COLUMN batch_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE replay_results ADD COLUMN trial INT NOT NULL DEFAULT 1`,
 	} {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("audit_events alter migration failed: %w", err)
@@ -586,8 +611,8 @@ func (m *MySQL) CreateReplayResult(v domain.ReplayResult) error {
 	if err != nil {
 		return err
 	}
-	_, err = m.db.Exec(`INSERT INTO replay_results (id, case_id, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.CaseID, v.Config, v.Model, v.JudgeModel, v.JudgeSource, "pending", nil, "", "", nil, v.CauseCorrect, v.Faithfulness, v.Hallucination, v.Judged, v.DurationMS, v.ToolFailures, string(payload), v.CreatedBy, v.CreatedAt)
+	_, err = m.db.Exec(`INSERT INTO replay_results (id, case_id, batch_id, trial, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.CaseID, v.BatchID, v.Trial, v.Config, v.Model, v.JudgeModel, v.JudgeSource, "pending", nil, "", "", nil, v.CauseCorrect, v.Faithfulness, v.Hallucination, v.Judged, v.DurationMS, v.ToolFailures, string(payload), v.CreatedBy, v.CreatedAt)
 	return err
 }
 
@@ -596,7 +621,7 @@ func scanReplayResult(scanner approvalScanner) (domain.ReplayResult, error) {
 	var payload string
 	var reviewCause sql.NullBool
 	var reviewedAt sql.NullTime
-	err := scanner.Scan(&v.ID, &v.CaseID, &v.Config, &v.Model, &v.JudgeModel, &v.JudgeSource, &v.ReviewStatus, &reviewCause, &v.ReviewNote, &v.ReviewedBy, &reviewedAt, &v.CauseCorrect, &v.Faithfulness, &v.Hallucination, &v.Judged, &v.DurationMS, &v.ToolFailures, &payload, &v.CreatedBy, &v.CreatedAt)
+	err := scanner.Scan(&v.ID, &v.CaseID, &v.BatchID, &v.Trial, &v.Config, &v.Model, &v.JudgeModel, &v.JudgeSource, &v.ReviewStatus, &reviewCause, &v.ReviewNote, &v.ReviewedBy, &reviewedAt, &v.CauseCorrect, &v.Faithfulness, &v.Hallucination, &v.Judged, &v.DurationMS, &v.ToolFailures, &payload, &v.CreatedBy, &v.CreatedAt)
 	if err != nil {
 		return v, err
 	}
@@ -616,15 +641,19 @@ func scanReplayResult(scanner approvalScanner) (domain.ReplayResult, error) {
 	return v, nil
 }
 
-func (m *MySQL) ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error) {
+func (m *MySQL) ListReplayResults(caseID, batchID string, limit int) ([]domain.ReplayResult, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 1000
 	}
-	columns := `id, case_id, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
+	columns := `id, case_id, batch_id, trial, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
 	var rows *sql.Rows
 	var err error
-	if caseID == "" {
+	if caseID == "" && batchID == "" {
 		rows, err = m.db.Query(`SELECT `+columns+` FROM replay_results ORDER BY created_at DESC LIMIT ?`, limit)
+	} else if caseID != "" && batchID != "" {
+		rows, err = m.db.Query(`SELECT `+columns+` FROM replay_results WHERE case_id = ? AND batch_id = ? ORDER BY created_at DESC LIMIT ?`, caseID, batchID, limit)
+	} else if batchID != "" {
+		rows, err = m.db.Query(`SELECT `+columns+` FROM replay_results WHERE batch_id = ? ORDER BY created_at DESC LIMIT ?`, batchID, limit)
 	} else {
 		rows, err = m.db.Query(`SELECT `+columns+` FROM replay_results WHERE case_id = ? ORDER BY created_at DESC LIMIT ?`, caseID, limit)
 	}
@@ -644,7 +673,7 @@ func (m *MySQL) ListReplayResults(caseID string, limit int) ([]domain.ReplayResu
 }
 
 func (m *MySQL) GetReplayResult(id string) (domain.ReplayResult, error) {
-	columns := `id, case_id, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
+	columns := `id, case_id, batch_id, trial, config, model, judge_model, judge_source, review_status, review_cause, review_note, reviewed_by, reviewed_at, cause_correct, faithfulness, hallucination, judged, duration_ms, tool_failures, result_json, created_by, created_at`
 	return scanReplayResult(m.db.QueryRow(`SELECT `+columns+` FROM replay_results WHERE id = ?`, id))
 }
 
@@ -654,6 +683,71 @@ func (m *MySQL) UpdateReplayResultReview(v domain.ReplayResult) error {
 		cause = *v.ReviewCause
 	}
 	_, err := m.db.Exec(`UPDATE replay_results SET review_status=?, review_cause=?, review_note=?, reviewed_by=?, reviewed_at=? WHERE id=?`, v.ReviewStatus, cause, v.ReviewNote, v.ReviewedBy, nullTime(v.ReviewedAt), v.ID)
+	return err
+}
+
+func (m *MySQL) CreateExperimentBatch(v domain.ExperimentBatch) error {
+	caseIDs, err := json.Marshal(v.CaseIDs)
+	if err != nil {
+		return err
+	}
+	configs, err := json.Marshal(v.Configs)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Exec(`INSERT INTO experiment_batches (id, name, case_ids, configs, repeats, model, judge_model, judge_source, knowledge_mode, status, total_runs, completed_runs, failed_runs, error_text, created_by, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.Name, string(caseIDs), string(configs), v.Repeats, v.Model, v.JudgeModel, v.JudgeSource, v.KnowledgeMode, v.Status, v.TotalRuns, v.CompletedRuns, v.FailedRuns, v.Error, v.CreatedBy, v.CreatedAt, nullTime(v.CompletedAt))
+	return err
+}
+
+func scanExperimentBatch(scanner approvalScanner) (domain.ExperimentBatch, error) {
+	var v domain.ExperimentBatch
+	var caseIDs, configs string
+	var completedAt sql.NullTime
+	err := scanner.Scan(&v.ID, &v.Name, &caseIDs, &configs, &v.Repeats, &v.Model, &v.JudgeModel, &v.JudgeSource, &v.KnowledgeMode, &v.Status, &v.TotalRuns, &v.CompletedRuns, &v.FailedRuns, &v.Error, &v.CreatedBy, &v.CreatedAt, &completedAt)
+	if err != nil {
+		return v, err
+	}
+	if err = json.Unmarshal([]byte(caseIDs), &v.CaseIDs); err != nil {
+		return v, err
+	}
+	if err = json.Unmarshal([]byte(configs), &v.Configs); err != nil {
+		return v, err
+	}
+	if completedAt.Valid {
+		v.CompletedAt = completedAt.Time
+	}
+	return v, nil
+}
+
+const experimentBatchColumns = `id, name, case_ids, configs, repeats, model, judge_model, judge_source, knowledge_mode, status, total_runs, completed_runs, failed_runs, error_text, created_by, created_at, completed_at`
+
+func (m *MySQL) ListExperimentBatches(limit int) ([]domain.ExperimentBatch, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := m.db.Query(`SELECT `+experimentBatchColumns+` FROM experiment_batches ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.ExperimentBatch, 0)
+	for rows.Next() {
+		v, err := scanExperimentBatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (m *MySQL) GetExperimentBatch(id string) (domain.ExperimentBatch, error) {
+	return scanExperimentBatch(m.db.QueryRow(`SELECT `+experimentBatchColumns+` FROM experiment_batches WHERE id = ?`, id))
+}
+
+func (m *MySQL) UpdateExperimentBatch(v domain.ExperimentBatch) error {
+	_, err := m.db.Exec(`UPDATE experiment_batches SET status=?, completed_runs=?, failed_runs=?, error_text=?, completed_at=? WHERE id=?`, v.Status, v.CompletedRuns, v.FailedRuns, v.Error, nullTime(v.CompletedAt), v.ID)
 	return err
 }
 

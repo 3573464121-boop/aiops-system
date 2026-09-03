@@ -145,6 +145,24 @@ func TestFaultCaseLifecycleAndValidation(t *testing.T) {
 	}
 }
 
+func TestCreateFaultCasesValidatesWholeBatch(t *testing.T) {
+	s := New(tools.NewService(nil, nil, nil), nil)
+	ctx := WithActor(context.Background(), "USR-admin", "admin", "admin")
+	valid := domain.FaultCaseRequest{Name: "valid", ProductID: "payment", Question: "why", GoldCause: "cause", Logs: []domain.Evidence{{Content: "evidence"}}}
+	invalid := domain.FaultCaseRequest{Name: "invalid", ProductID: "payment", Question: "why", GoldCause: "cause"}
+	if _, err := s.CreateFaultCases(ctx, []domain.FaultCaseRequest{valid, invalid}); err == nil {
+		t.Fatal("invalid batch must fail")
+	}
+	items, _ := s.ListFaultCases()
+	if len(items) != 0 {
+		t.Fatal("validation failure must not partially import cases")
+	}
+	created, err := s.CreateFaultCases(ctx, []domain.FaultCaseRequest{valid, valid})
+	if err != nil || len(created) != 2 {
+		t.Fatalf("valid batch import failed: len=%d err=%v", len(created), err)
+	}
+}
+
 func TestReplayConfigValidation(t *testing.T) {
 	got, err := normalizeReplayConfigs([]string{"full", "full", "bm25"})
 	if err != nil || len(got) != 2 {
@@ -152,6 +170,19 @@ func TestReplayConfigValidation(t *testing.T) {
 	}
 	if _, err := normalizeReplayConfigs([]string{"invalid"}); err == nil {
 		t.Fatal("invalid replay config must be rejected")
+	}
+}
+
+func TestAssessReplayQuality(t *testing.T) {
+	v := domain.ReplayResult{Judged: true, Faithfulness: 0, Hallucination: false, CauseCorrect: true, Diagnosis: domain.DiagnosisResult{Evidence: []domain.Evidence{}}}
+	assessReplayQuality(&v)
+	if v.QualityStatus != "warning" || len(v.QualityIssues) != 2 {
+		t.Fatalf("expected two consistency warnings: %+v", v)
+	}
+	v = domain.ReplayResult{Judged: true, Faithfulness: 1, Hallucination: false, CauseCorrect: true, Diagnosis: domain.DiagnosisResult{Evidence: []domain.Evidence{{Source: "log/1"}}}}
+	assessReplayQuality(&v)
+	if v.QualityStatus != "pass" || len(v.QualityIssues) != 0 {
+		t.Fatalf("well-formed result should pass: %+v", v)
 	}
 }
 

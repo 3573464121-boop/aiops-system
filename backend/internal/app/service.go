@@ -19,6 +19,7 @@ type Service struct {
 	LLM        *llm.Client
 	Judge      *llm.Client
 	Repo       storage.Repository
+	batchMu    sync.Mutex // Serializes experiment batches to limit model pressure.
 	inspectMu  sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
 	approvalMu sync.Mutex // 串行化审批状态迁移，避免重复审批或执行
 }

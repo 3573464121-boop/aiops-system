@@ -19,10 +19,11 @@ type Memory struct {
 	runs      []domain.DiagnosisRun
 	cases     []domain.FaultCase
 	replays   []domain.ReplayResult
+	batches   []domain.ExperimentBatch
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -293,12 +294,12 @@ func (m *Memory) CreateReplayResult(v domain.ReplayResult) error {
 	m.replays = append([]domain.ReplayResult{v}, m.replays...)
 	return nil
 }
-func (m *Memory) ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error) {
+func (m *Memory) ListReplayResults(caseID, batchID string, limit int) ([]domain.ReplayResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]domain.ReplayResult, 0)
 	for _, v := range m.replays {
-		if caseID == "" || v.CaseID == caseID {
+		if (caseID == "" || v.CaseID == caseID) && (batchID == "" || v.BatchID == batchID) {
 			out = append(out, v)
 		}
 		if limit > 0 && len(out) >= limit {
@@ -306,6 +307,42 @@ func (m *Memory) ListReplayResults(caseID string, limit int) ([]domain.ReplayRes
 		}
 	}
 	return out, nil
+}
+
+func (m *Memory) CreateExperimentBatch(v domain.ExperimentBatch) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.batches = append([]domain.ExperimentBatch{v}, m.batches...)
+	return nil
+}
+func (m *Memory) ListExperimentBatches(limit int) ([]domain.ExperimentBatch, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > len(m.batches) {
+		limit = len(m.batches)
+	}
+	return append([]domain.ExperimentBatch(nil), m.batches[:limit]...), nil
+}
+func (m *Memory) GetExperimentBatch(id string) (domain.ExperimentBatch, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, v := range m.batches {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return domain.ExperimentBatch{}, fmt.Errorf("实验批次不存在: %s", id)
+}
+func (m *Memory) UpdateExperimentBatch(v domain.ExperimentBatch) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.batches {
+		if m.batches[i].ID == v.ID {
+			m.batches[i] = v
+			return nil
+		}
+	}
+	return fmt.Errorf("实验批次不存在: %s", v.ID)
 }
 func (m *Memory) GetReplayResult(id string) (domain.ReplayResult, error) {
 	m.mu.RLock()

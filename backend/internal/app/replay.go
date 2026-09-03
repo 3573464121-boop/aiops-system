@@ -105,6 +105,26 @@ func normalizeFaultCaseRequest(req *domain.FaultCaseRequest) error {
 
 func (s *Service) ListFaultCases() ([]domain.FaultCase, error) { return s.Repo.ListFaultCases() }
 
+func (s *Service) CreateFaultCases(ctx context.Context, requests []domain.FaultCaseRequest) ([]domain.FaultCase, error) {
+	if len(requests) == 0 || len(requests) > 500 {
+		return nil, fmt.Errorf("批量导入数量必须在 1 到 500 条之间")
+	}
+	for i := range requests {
+		if err := normalizeFaultCaseRequest(&requests[i]); err != nil {
+			return nil, fmt.Errorf("第 %d 条案例无效: %w", i+1, err)
+		}
+	}
+	out := make([]domain.FaultCase, 0, len(requests))
+	for _, req := range requests {
+		v, err := s.CreateFaultCase(ctx, req)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
 func (s *Service) GetFaultCase(id string) (domain.FaultCase, error) {
 	return s.Repo.GetFaultCase(strings.TrimSpace(id))
 }
@@ -122,8 +142,15 @@ func (s *Service) DeleteFaultCase(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Service) ListReplayResults(caseID string, limit int) ([]domain.ReplayResult, error) {
-	return s.Repo.ListReplayResults(strings.TrimSpace(caseID), limit)
+func (s *Service) ListReplayResults(caseID, batchID string, limit int) ([]domain.ReplayResult, error) {
+	items, err := s.Repo.ListReplayResults(strings.TrimSpace(caseID), strings.TrimSpace(batchID), limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		assessReplayQuality(&items[i])
+	}
+	return items, nil
 }
 
 func (s *Service) ReviewReplayResult(ctx context.Context, id string, req domain.ReplayResultReviewRequest) (domain.ReplayResult, error) {
@@ -144,6 +171,7 @@ func (s *Service) ReviewReplayResult(ctx context.Context, id string, req domain.
 	if err := s.Repo.UpdateReplayResultReview(v); err != nil {
 		return domain.ReplayResult{}, err
 	}
+	assessReplayQuality(&v)
 	s.addAudit(ctx, "review_replay_result", v.Diagnosis.ProductID, "success", 0)
 	return v, nil
 }
@@ -166,13 +194,8 @@ func (s *Service) ReplayFaultCase(ctx context.Context, id string, req domain.Rep
 		if err := ctx.Err(); err != nil {
 			return results, err
 		}
-		result := s.runReplayConfig(ctx, c, config)
-		result.ID = fmt.Sprintf("REPLAY-%d", time.Now().UnixNano())
-		result.CaseID, result.Config, result.Model = c.ID, config, s.LLM.Model
-		result.CreatedBy, result.CreatedAt = username, time.Now()
-		result.JudgeModel, result.JudgeSource = s.judgeInfo()
-		result.Faithfulness, result.Hallucination, result.CauseCorrect, result.Judged = s.judgeReplay(ctx, c, result.Diagnosis)
-		if err := s.Repo.CreateReplayResult(result); err != nil {
+		result, err := s.executeReplay(ctx, c, config, "", 1, username)
+		if err != nil {
 			s.addAudit(ctx, "replay_fault_case", c.ProductID, "error", result.DurationMS)
 			return results, err
 		}
@@ -180,6 +203,40 @@ func (s *Service) ReplayFaultCase(ctx context.Context, id string, req domain.Rep
 	}
 	s.addAudit(ctx, "replay_fault_case", c.ProductID, "success", 0)
 	return results, nil
+}
+
+func (s *Service) executeReplay(ctx context.Context, c domain.FaultCase, config, batchID string, trial int, username string) (domain.ReplayResult, error) {
+	result := s.runReplayConfig(ctx, c, config)
+	result.ID = fmt.Sprintf("REPLAY-%d", time.Now().UnixNano())
+	result.CaseID, result.BatchID, result.Trial = c.ID, batchID, trial
+	result.Config, result.Model = config, s.LLM.Model
+	result.CreatedBy, result.CreatedAt = username, time.Now()
+	result.JudgeModel, result.JudgeSource = s.judgeInfo()
+	result.Faithfulness, result.Hallucination, result.CauseCorrect, result.Judged = s.judgeReplay(ctx, c, result.Diagnosis)
+	assessReplayQuality(&result)
+	return result, s.Repo.CreateReplayResult(result)
+}
+
+func assessReplayQuality(v *domain.ReplayResult) {
+	issues := make([]string, 0, 3)
+	evidenceCount := len(v.Diagnosis.Evidence)
+	if !v.Judged {
+		issues = append(issues, "judge_unavailable")
+	}
+	if v.Judged && evidenceCount == 0 && v.Faithfulness > 0 {
+		issues = append(issues, "faithfulness_without_evidence")
+	}
+	if v.Judged && v.Faithfulness == 0 && !v.Hallucination {
+		issues = append(issues, "zero_faithfulness_without_hallucination")
+	}
+	if v.Judged && evidenceCount == 0 && v.CauseCorrect {
+		issues = append(issues, "correct_cause_without_evidence")
+	}
+	v.QualityStatus = "pass"
+	if len(issues) > 0 {
+		v.QualityStatus = "warning"
+	}
+	v.QualityIssues = issues
 }
 
 func (s *Service) judgeInfo() (string, string) {

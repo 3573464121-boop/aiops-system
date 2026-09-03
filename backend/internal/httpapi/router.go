@@ -477,6 +477,19 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		}
 		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
 	})
+	api.POST("/fault-cases/bulk", requireAdmin, func(c *gin.Context) {
+		var requests []domain.FaultCaseRequest
+		if err := c.ShouldBindJSON(&requests); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.CreateFaultCases(c.Request.Context(), requests)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"items": v, "total": len(v)})
+	})
 	api.POST("/fault-cases", requireAdmin, func(c *gin.Context) {
 		var req domain.FaultCaseRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -520,7 +533,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 	})
 	api.GET("/replay-results", requireAdmin, func(c *gin.Context) {
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
-		v, err := s.ListReplayResults(c.Query("case_id"), limit)
+		v, err := s.ListReplayResults(c.Query("case_id"), c.Query("batch_id"), limit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -539,6 +552,36 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			return
 		}
 		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/experiment-batches", requireAdmin, func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+		v, err := s.ListExperimentBatches(limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
+	})
+	api.GET("/experiment-batches/:id", requireAdmin, func(c *gin.Context) {
+		v, err := s.GetExperimentBatch(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.POST("/experiment-batches", requireAdmin, func(c *gin.Context) {
+		var req domain.ExperimentBatchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.CreateExperimentBatch(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusAccepted, v)
 	})
 	api.GET("/audits", func(c *gin.Context) {
 		v, err := s.Audits()
