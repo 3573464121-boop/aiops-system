@@ -18,6 +18,7 @@ smoke.log
 node_modules/
 dist/
 .vite/
+backend/knowledge-managed/
 
 # 编辑器 / 系统
 .idea/

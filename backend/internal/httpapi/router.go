@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,7 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes ...string) *gin.Engine {
+func New(s *app.Service, signer *auth.Signer, _ int, storageModes ...string) *gin.Engine {
 	storageMode := "memory"
 	if len(storageModes) > 0 && storageModes[0] != "" {
 		storageMode = storageModes[0]
@@ -26,7 +27,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 	r.Use(gin.Logger(), gin.Recovery())
 	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173"}, AllowMethods: []string{"GET", "POST", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID"}, MaxAge: 12 * time.Hour}))
 	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "time": time.Now(), "knowledge_chunks": knowledgeCount, "storage": storageMode})
+		c.JSON(200, gin.H{"status": "ok", "time": time.Now(), "knowledge_chunks": s.Tools.KnowledgeSize(), "storage": storageMode})
 	})
 	api := r.Group("/api/v1")
 
@@ -91,7 +92,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 	})
 
 	api.GET("/system/status", func(c *gin.Context) {
-		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "asset_provider": s.Tools.AssetProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": knowledgeCount, "storage_provider": storageMode, "safe_mode": true})
+		c.JSON(200, gin.H{"backend": "online", "alert_provider": s.Tools.AlertProviderName(), "log_provider": s.Tools.LogProviderName(), "asset_provider": s.Tools.AssetProviderName(), "llm_provider": mode("LLM_BASE_URL"), "knowledge_provider": s.Tools.KnowledgeMode(), "knowledge_chunks": s.Tools.KnowledgeSize(), "storage_provider": storageMode, "safe_mode": true})
 	})
 	api.GET("/data-sources", func(c *gin.Context) {
 		items := s.Tools.DataSources()
@@ -164,6 +165,72 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		}
 		v := s.Tools.SearchKnowledge(q, limit)
 		c.JSON(200, gin.H{"items": v, "total": len(v), "mode": s.Tools.KnowledgeMode()})
+	})
+	api.GET("/knowledge/documents", func(c *gin.Context) {
+		v, err := s.ListKnowledgeDocuments()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
+	})
+	api.GET("/knowledge/status", func(c *gin.Context) {
+		c.JSON(http.StatusOK, s.KnowledgeStatus())
+	})
+	api.POST("/knowledge/documents", requireAdmin, func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, (2<<20)+(64<<10))
+		file, err := c.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择一个不超过 2 MiB 的 Markdown 文档"})
+			return
+		}
+		opened, err := file.Open()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无法读取上传文档"})
+			return
+		}
+		defer opened.Close()
+		content, err := io.ReadAll(io.LimitReader(opened, (2<<20)+1))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无法读取上传文档"})
+			return
+		}
+		v, err := s.ImportKnowledgeDocument(c.Request.Context(), file.Filename, content)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.POST("/knowledge/documents/:id/toggle", requireAdmin, func(c *gin.Context) {
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v, err := s.ToggleKnowledgeDocument(c.Request.Context(), c.Param("id"), req.Enabled)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.DELETE("/knowledge/documents/:id", requireAdmin, func(c *gin.Context) {
+		if err := s.DeleteKnowledgeDocument(c.Request.Context(), c.Param("id")); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	api.POST("/knowledge/reindex", requireAdmin, func(c *gin.Context) {
+		status, err := s.ReindexKnowledge(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, status)
 	})
 	api.GET("/assets", func(c *gin.Context) {
 		v, err := s.Tools.Assets(strings.TrimSpace(c.Query("product_id")))

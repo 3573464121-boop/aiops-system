@@ -10,6 +10,8 @@ import (
 )
 
 func (s *Service) CreateExperimentBatch(ctx context.Context, req domain.ExperimentBatchRequest) (domain.ExperimentBatch, error) {
+	s.knowledgeOpMu.Lock()
+	defer s.knowledgeOpMu.Unlock()
 	if s.LLM == nil || !s.LLM.Enabled() {
 		return domain.ExperimentBatch{}, fmt.Errorf("实验批次需要配置可用的大模型")
 	}
@@ -42,7 +44,7 @@ func (s *Service) CreateExperimentBatch(ctx context.Context, req domain.Experime
 	v := domain.ExperimentBatch{
 		ID: fmt.Sprintf("BATCH-%d", now.UnixNano()), Name: name, CaseIDs: caseIDs,
 		Configs: configs, Repeats: req.Repeats, Model: s.LLM.Model,
-		JudgeModel: judgeModel, JudgeSource: judgeSource, KnowledgeMode: s.Tools.KnowledgeMode(),
+		JudgeModel: judgeModel, JudgeSource: judgeSource, KnowledgeMode: s.Tools.KnowledgeMode(), KnowledgeVersion: s.KnowledgeStatus().Version,
 		Status: "pending", TotalRuns: len(caseIDs) * len(configs) * req.Repeats,
 		CreatedBy: username, CreatedAt: now,
 	}
@@ -50,9 +52,27 @@ func (s *Service) CreateExperimentBatch(ctx context.Context, req domain.Experime
 		return domain.ExperimentBatch{}, err
 	}
 	userID, _, role, teamID := actorFromContext(ctx)
-	go s.runExperimentBatch(WithActorTeam(context.Background(), userID, username, role, teamID), v.ID)
+	s.beginExperimentBatch()
+	go func() {
+		defer s.endExperimentBatch()
+		s.runExperimentBatch(WithActorTeam(context.Background(), userID, username, role, teamID), v.ID)
+	}()
 	s.addAudit(ctx, "create_experiment_batch", "", "success", 0)
 	return v, nil
+}
+
+func (s *Service) beginExperimentBatch() {
+	s.experimentStateMu.Lock()
+	s.activeExperimentBatches++
+	s.experimentStateMu.Unlock()
+}
+
+func (s *Service) endExperimentBatch() {
+	s.experimentStateMu.Lock()
+	if s.activeExperimentBatches > 0 {
+		s.activeExperimentBatches--
+	}
+	s.experimentStateMu.Unlock()
 }
 
 func uniqueStrings(items []string) []string {

@@ -14,6 +14,7 @@ type Memory struct {
 	tasks     []domain.InspectionTask
 	reports   []domain.InspectionReport
 	memories  []domain.Memory
+	documents []domain.KnowledgeDocument
 	users     []domain.User
 	approvals []domain.Approval
 	runs      []domain.DiagnosisRun
@@ -23,7 +24,7 @@ type Memory struct {
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, documents: []domain.KnowledgeDocument{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -142,6 +143,68 @@ func (m *Memory) DeleteMemory(id string) error {
 		}
 	}
 	m.memories = out
+	return nil
+}
+
+func (m *Memory) CreateKnowledgeDocument(v domain.KnowledgeDocument) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, doc := range m.documents {
+		if doc.ID == v.ID || doc.ContentHash == v.ContentHash {
+			return fmt.Errorf("knowledge document already exists: %s", v.Name)
+		}
+	}
+	m.documents = append([]domain.KnowledgeDocument{v}, m.documents...)
+	return nil
+}
+func (m *Memory) ListKnowledgeDocuments() ([]domain.KnowledgeDocument, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]domain.KnowledgeDocument(nil), m.documents...), nil
+}
+func (m *Memory) GetKnowledgeDocument(id string) (domain.KnowledgeDocument, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, doc := range m.documents {
+		if doc.ID == id {
+			return doc, nil
+		}
+	}
+	return domain.KnowledgeDocument{}, fmt.Errorf("knowledge document not found: %s", id)
+}
+func (m *Memory) UpdateKnowledgeDocument(v domain.KnowledgeDocument) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.documents {
+		if m.documents[i].ID == v.ID {
+			m.documents[i] = v
+			return nil
+		}
+	}
+	return fmt.Errorf("knowledge document not found: %s", v.ID)
+}
+func (m *Memory) DeleteKnowledgeDocument(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, doc := range m.documents {
+		if doc.ID == id {
+			m.documents = append(m.documents[:i], m.documents[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("knowledge document not found: %s", id)
+}
+func (m *Memory) IncrementKnowledgeDocumentHits(ids []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.documents {
+		for _, id := range ids {
+			if m.documents[i].ID == id {
+				m.documents[i].HitCount++
+				break
+			}
+		}
+	}
 	return nil
 }
 

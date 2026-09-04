@@ -210,6 +210,7 @@ func (s *Service) executeReplay(ctx context.Context, c domain.FaultCase, config,
 	result.ID = fmt.Sprintf("REPLAY-%d", time.Now().UnixNano())
 	result.CaseID, result.BatchID, result.Trial = c.ID, batchID, trial
 	result.Config, result.Model = config, s.LLM.Model
+	result.KnowledgeVersion = s.KnowledgeStatus().Version
 	result.CreatedBy, result.CreatedAt = username, time.Now()
 	result.JudgeModel, result.JudgeSource = s.judgeInfo()
 	result.Faithfulness, result.Hallucination, result.CauseCorrect, result.Judged = s.judgeReplay(ctx, c, result.Diagnosis)
@@ -274,7 +275,7 @@ func (s *Service) runReplayConfig(ctx context.Context, c domain.FaultCase, confi
 	if config == "no-agent" {
 		diagnosis = s.runNoAgentReplay(ctx, c)
 	} else {
-		t := tools.NewService(s.Tools.Knowledge, tools.ReplayAlertProvider{Items: c.Alerts}, tools.ReplayLogProvider{Items: c.Logs})
+		t := tools.NewService(s.Tools.KnowledgeSnapshot(), tools.ReplayAlertProvider{Items: c.Alerts}, tools.ReplayLogProvider{Items: c.Logs})
 		t.AssetsProvider = tools.ReplayAssetProvider{Items: c.Assets}
 		if config == "full" {
 			t.Embed = s.Tools.Embed

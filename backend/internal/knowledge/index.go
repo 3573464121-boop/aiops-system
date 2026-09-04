@@ -185,6 +185,22 @@ func (i *Index) ChunkTexts() []string {
 	return out
 }
 
+// SourceCounts returns the number of chunks produced for each source file.
+func (i *Index) SourceCounts() map[string]int {
+	out := map[string]int{}
+	if i == nil {
+		return out
+	}
+	for _, chunk := range i.chunks {
+		source := chunk.Source
+		if pos := strings.LastIndex(source, "#"); pos >= 0 {
+			source = source[:pos]
+		}
+		out[source]++
+	}
+	return out
+}
+
 // Search 关键词（BM25）检索。
 func (i *Index) Search(query string, limit int) []domain.Evidence {
 	if i == nil || limit <= 0 {

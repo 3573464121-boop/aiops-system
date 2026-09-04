@@ -16,14 +16,21 @@ import (
 )
 
 type Service struct {
-	Tools      *tools.Service
-	LLM        *llm.Client
-	Judge      *llm.Client
-	Repo       storage.Repository
-	Executor   *executor.Simulator
-	batchMu    sync.Mutex // Serializes experiment batches to limit model pressure.
-	inspectMu  sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
-	approvalMu sync.Mutex // 串行化审批状态迁移，避免重复审批或执行
+	Tools                   *tools.Service
+	LLM                     *llm.Client
+	Judge                   *llm.Client
+	Repo                    storage.Repository
+	Executor                *executor.Simulator
+	batchMu                 sync.Mutex // Serializes experiment batches to limit model pressure.
+	inspectMu               sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
+	approvalMu              sync.Mutex // 串行化审批状态迁移，避免重复审批或执行
+	knowledgeOpMu           sync.Mutex
+	knowledgeMu             sync.RWMutex
+	knowledgeRoot           string
+	knowledgeDocs           map[string]string
+	knowledgeState          domain.KnowledgeStatus
+	experimentStateMu       sync.RWMutex
+	activeExperimentBatches int
 }
 
 func New(t *tools.Service, l *llm.Client, repos ...storage.Repository) *Service {
@@ -31,7 +38,7 @@ func New(t *tools.Service, l *llm.Client, repos ...storage.Repository) *Service 
 	if len(repos) > 0 && repos[0] != nil {
 		repo = repos[0]
 	}
-	return &Service{Tools: t, LLM: l, Repo: repo, Executor: executor.NewSimulator()}
+	return &Service{Tools: t, LLM: l, Repo: repo, Executor: executor.NewSimulator(), knowledgeDocs: map[string]string{}}
 }
 
 const maxToolRounds = 5

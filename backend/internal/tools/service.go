@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"aiops-mvp/internal/domain"
@@ -15,8 +16,11 @@ type Service struct {
 	AlertsProvider AlertProvider
 	LogsProvider   LogProvider
 	AssetsProvider AssetProvider
+	knowledgeMu    sync.RWMutex
 	// Embed 可选：把查询向量化，用于知识库混合检索。未设置时退回 BM25。
-	Embed func(string) ([]float32, error)
+	Embed           func(string) ([]float32, error)
+	EmbedDocuments  func([]string) ([][]float32, error)
+	OnKnowledgeHits func([]domain.Evidence)
 }
 
 func NewService(k *knowledge.Index, alerts AlertProvider, logs LogProvider) *Service {
@@ -41,22 +45,47 @@ func (s *Service) Logs(productID, query string) ([]domain.Evidence, error) {
 	return s.LogsProvider.Search(productID, query)
 }
 func (s *Service) SearchKnowledge(q string, limit int) []domain.Evidence {
-	if s.Knowledge == nil {
+	index := s.KnowledgeSnapshot()
+	if index == nil {
 		return []domain.Evidence{}
 	}
 	var qvec []float32
-	if s.Embed != nil && s.Knowledge.HasVectors() {
+	if s.Embed != nil && index.HasVectors() {
 		if v, err := s.Embed(q); err == nil {
 			qvec = v
 		}
 	}
-	return s.Knowledge.SearchHybrid(q, qvec, limit)
+	results := index.SearchHybrid(q, qvec, limit)
+	if s.OnKnowledgeHits != nil && len(results) > 0 {
+		s.OnKnowledgeHits(results)
+	}
+	return results
 }
 func (s *Service) KnowledgeMode() string {
-	if s.Knowledge != nil && s.Knowledge.HasVectors() {
+	index := s.KnowledgeSnapshot()
+	if index != nil && index.HasVectors() {
 		return "bm25+vector(RRF)"
 	}
+	if index == nil {
+		return "empty"
+	}
 	return "markdown-bm25"
+}
+func (s *Service) KnowledgeSnapshot() *knowledge.Index {
+	s.knowledgeMu.RLock()
+	defer s.knowledgeMu.RUnlock()
+	return s.Knowledge
+}
+func (s *Service) SetKnowledge(index *knowledge.Index) {
+	s.knowledgeMu.Lock()
+	s.Knowledge = index
+	s.knowledgeMu.Unlock()
+}
+func (s *Service) KnowledgeSize() int {
+	if index := s.KnowledgeSnapshot(); index != nil {
+		return index.Size()
+	}
+	return 0
 }
 func (s *Service) AlertProviderName() string {
 	if s.AlertsProvider == nil {
@@ -112,7 +141,11 @@ func (s *Service) DataSources() []domain.DataSourceStatus {
 	case *LokiLogProvider:
 		logs.Configured, logs.Endpoint, logs.Status, logs.Message = true, safeEndpoint(p.BaseURL), "unknown", "已配置，等待连接测试"
 	}
-	knowledge := domain.DataSourceStatus{Name: "knowledge", Kind: "knowledge", Mode: s.KnowledgeMode(), Configured: s.Knowledge != nil, Status: "ready", Message: "知识索引可用"}
+	knowledgeIndex := s.KnowledgeSnapshot()
+	knowledge := domain.DataSourceStatus{Name: "knowledge", Kind: "knowledge", Mode: s.KnowledgeMode(), Configured: knowledgeIndex != nil, Status: "ready", Message: "知识索引可用"}
+	if knowledgeIndex == nil {
+		knowledge.Status, knowledge.Message = "empty", "知识库没有启用的文档"
+	}
 	assets := domain.DataSourceStatus{Name: "assets", Kind: "asset", Mode: s.AssetProviderName(), Configured: s.AssetsProvider != nil, Status: "demo", Message: "使用内置演示资产"}
 	if s.AssetsProvider != nil && s.AssetsProvider.Name() != "demo" {
 		assets.Status, assets.Message = "unknown", "已配置，等待连接测试"

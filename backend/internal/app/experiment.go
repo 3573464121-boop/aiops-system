@@ -50,7 +50,7 @@ func (s *Service) recordDiagnosisRun(ctx context.Context, req domain.DiagnosisRe
 		Mode: result.Mode, Model: model, Summary: result.Summary, Confidence: result.Confidence,
 		EvidenceCount: len(result.Evidence), AlertCount: len(result.Alerts), ToolCallCount: len(toolsUsed), FailedToolCount: failed,
 		KnowledgeHit: knowledgeHit, MemoryHit: memoryHit, AssetHit: assetHit, DurationMS: duration.Milliseconds(),
-		AlertProvider: s.Tools.AlertProviderName(), LogProvider: s.Tools.LogProviderName(), KnowledgeMode: s.Tools.KnowledgeMode(),
+		AlertProvider: s.Tools.AlertProviderName(), LogProvider: s.Tools.LogProviderName(), KnowledgeMode: s.Tools.KnowledgeMode(), KnowledgeVersion: s.KnowledgeStatus().Version,
 		EvidenceSources: sources, Tools: toolsUsed, Username: username, CreatedAt: time.Now(),
 	}
 	_ = s.Repo.CreateDiagnosisRun(run)

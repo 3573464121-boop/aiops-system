@@ -134,33 +134,34 @@ type DataSourceStatus struct {
 }
 
 type DiagnosisRun struct {
-	ID              string    `json:"id"`
-	ProductID       string    `json:"product_id"`
-	Question        string    `json:"question"`
-	Mode            string    `json:"mode"`
-	Model           string    `json:"model"`
-	Summary         string    `json:"summary"`
-	Confidence      float64   `json:"confidence"`
-	EvidenceCount   int       `json:"evidence_count"`
-	AlertCount      int       `json:"alert_count"`
-	ToolCallCount   int       `json:"tool_call_count"`
-	FailedToolCount int       `json:"failed_tool_count"`
-	KnowledgeHit    bool      `json:"knowledge_hit"`
-	MemoryHit       bool      `json:"memory_hit"`
-	AssetHit        bool      `json:"asset_hit"`
-	DurationMS      int64     `json:"duration_ms"`
-	AlertProvider   string    `json:"alert_provider"`
-	LogProvider     string    `json:"log_provider"`
-	KnowledgeMode   string    `json:"knowledge_mode"`
-	EvidenceSources []string  `json:"evidence_sources"`
-	Tools           []string  `json:"tools"`
-	Username        string    `json:"username"`
-	Included        bool      `json:"included"`
-	GoldCause       string    `json:"gold_cause"`
-	ReviewerNote    string    `json:"reviewer_note"`
-	ReviewedBy      string    `json:"reviewed_by"`
-	CreatedAt       time.Time `json:"created_at"`
-	ReviewedAt      time.Time `json:"reviewed_at"`
+	ID               string    `json:"id"`
+	ProductID        string    `json:"product_id"`
+	Question         string    `json:"question"`
+	Mode             string    `json:"mode"`
+	Model            string    `json:"model"`
+	Summary          string    `json:"summary"`
+	Confidence       float64   `json:"confidence"`
+	EvidenceCount    int       `json:"evidence_count"`
+	AlertCount       int       `json:"alert_count"`
+	ToolCallCount    int       `json:"tool_call_count"`
+	FailedToolCount  int       `json:"failed_tool_count"`
+	KnowledgeHit     bool      `json:"knowledge_hit"`
+	MemoryHit        bool      `json:"memory_hit"`
+	AssetHit         bool      `json:"asset_hit"`
+	DurationMS       int64     `json:"duration_ms"`
+	AlertProvider    string    `json:"alert_provider"`
+	LogProvider      string    `json:"log_provider"`
+	KnowledgeMode    string    `json:"knowledge_mode"`
+	KnowledgeVersion string    `json:"knowledge_version"`
+	EvidenceSources  []string  `json:"evidence_sources"`
+	Tools            []string  `json:"tools"`
+	Username         string    `json:"username"`
+	Included         bool      `json:"included"`
+	GoldCause        string    `json:"gold_cause"`
+	ReviewerNote     string    `json:"reviewer_note"`
+	ReviewedBy       string    `json:"reviewed_by"`
+	CreatedAt        time.Time `json:"created_at"`
+	ReviewedAt       time.Time `json:"reviewed_at"`
 }
 
 type DiagnosisRunReviewRequest struct {
@@ -210,50 +211,52 @@ type ExperimentBatchRequest struct {
 }
 
 type ExperimentBatch struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	CaseIDs       []string  `json:"case_ids"`
-	Configs       []string  `json:"configs"`
-	Repeats       int       `json:"repeats"`
-	Model         string    `json:"model"`
-	JudgeModel    string    `json:"judge_model"`
-	JudgeSource   string    `json:"judge_source"`
-	KnowledgeMode string    `json:"knowledge_mode"`
-	Status        string    `json:"status"` // pending | running | completed | failed
-	TotalRuns     int       `json:"total_runs"`
-	CompletedRuns int       `json:"completed_runs"`
-	FailedRuns    int       `json:"failed_runs"`
-	Error         string    `json:"error"`
-	CreatedBy     string    `json:"created_by"`
-	CreatedAt     time.Time `json:"created_at"`
-	CompletedAt   time.Time `json:"completed_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	CaseIDs          []string  `json:"case_ids"`
+	Configs          []string  `json:"configs"`
+	Repeats          int       `json:"repeats"`
+	Model            string    `json:"model"`
+	JudgeModel       string    `json:"judge_model"`
+	JudgeSource      string    `json:"judge_source"`
+	KnowledgeMode    string    `json:"knowledge_mode"`
+	KnowledgeVersion string    `json:"knowledge_version"`
+	Status           string    `json:"status"` // pending | running | completed | failed
+	TotalRuns        int       `json:"total_runs"`
+	CompletedRuns    int       `json:"completed_runs"`
+	FailedRuns       int       `json:"failed_runs"`
+	Error            string    `json:"error"`
+	CreatedBy        string    `json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
+	CompletedAt      time.Time `json:"completed_at"`
 }
 
 type ReplayResult struct {
-	ID            string          `json:"id"`
-	CaseID        string          `json:"case_id"`
-	BatchID       string          `json:"batch_id"`
-	Trial         int             `json:"trial"`
-	Config        string          `json:"config"`
-	Model         string          `json:"model"`
-	JudgeModel    string          `json:"judge_model"`
-	JudgeSource   string          `json:"judge_source"` // independent | self
-	Diagnosis     DiagnosisResult `json:"diagnosis"`
-	CauseCorrect  bool            `json:"cause_correct"`
-	Faithfulness  float64         `json:"faithfulness"`
-	Hallucination bool            `json:"hallucination"`
-	Judged        bool            `json:"judged"`
-	DurationMS    int64           `json:"duration_ms"`
-	ToolFailures  int             `json:"tool_failures"`
-	CreatedBy     string          `json:"created_by"`
-	CreatedAt     time.Time       `json:"created_at"`
-	ReviewStatus  string          `json:"review_status"` // pending | accepted | rejected
-	ReviewCause   *bool           `json:"review_cause,omitempty"`
-	ReviewNote    string          `json:"review_note"`
-	ReviewedBy    string          `json:"reviewed_by"`
-	ReviewedAt    time.Time       `json:"reviewed_at"`
-	QualityStatus string          `json:"quality_status"` // pass | warning
-	QualityIssues []string        `json:"quality_issues"`
+	ID               string          `json:"id"`
+	CaseID           string          `json:"case_id"`
+	BatchID          string          `json:"batch_id"`
+	Trial            int             `json:"trial"`
+	Config           string          `json:"config"`
+	Model            string          `json:"model"`
+	JudgeModel       string          `json:"judge_model"`
+	JudgeSource      string          `json:"judge_source"` // independent | self
+	KnowledgeVersion string          `json:"knowledge_version"`
+	Diagnosis        DiagnosisResult `json:"diagnosis"`
+	CauseCorrect     bool            `json:"cause_correct"`
+	Faithfulness     float64         `json:"faithfulness"`
+	Hallucination    bool            `json:"hallucination"`
+	Judged           bool            `json:"judged"`
+	DurationMS       int64           `json:"duration_ms"`
+	ToolFailures     int             `json:"tool_failures"`
+	CreatedBy        string          `json:"created_by"`
+	CreatedAt        time.Time       `json:"created_at"`
+	ReviewStatus     string          `json:"review_status"` // pending | accepted | rejected
+	ReviewCause      *bool           `json:"review_cause,omitempty"`
+	ReviewNote       string          `json:"review_note"`
+	ReviewedBy       string          `json:"reviewed_by"`
+	ReviewedAt       time.Time       `json:"reviewed_at"`
+	QualityStatus    string          `json:"quality_status"` // pass | warning
+	QualityIssues    []string        `json:"quality_issues"`
 }
 
 type ReplayResultReviewRequest struct {
@@ -342,6 +345,32 @@ type MemoryRequest struct {
 type MemoryExtractRequest struct {
 	ProductID string `json:"product_id"`
 	Text      string `json:"text" binding:"required"`
+}
+
+// KnowledgeDocument records one source document included in the searchable index.
+type KnowledgeDocument struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Path        string    `json:"-"`
+	ContentHash string    `json:"content_hash"`
+	Version     string    `json:"version"`
+	Enabled     bool      `json:"enabled"`
+	Managed     bool      `json:"managed"`
+	ChunkCount  int       `json:"chunk_count"`
+	HitCount    int64     `json:"hit_count"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type KnowledgeStatus struct {
+	DocumentCount int       `json:"document_count"`
+	EnabledCount  int       `json:"enabled_count"`
+	ChunkCount    int       `json:"chunk_count"`
+	Mode          string    `json:"mode"`
+	Version       string    `json:"version"`
+	LastIndexedAt time.Time `json:"last_indexed_at"`
+	Warning       string    `json:"warning,omitempty"`
 }
 
 // User 是系统登录用户。Role 目前分 admin（管理员，可管理配置）与 viewer（只读，可查看与诊断）。

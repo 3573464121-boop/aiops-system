@@ -21,6 +21,13 @@ type Repository interface {
 	ListMemories() ([]domain.Memory, error)
 	DeleteMemory(id string) error
 
+	CreateKnowledgeDocument(domain.KnowledgeDocument) error
+	ListKnowledgeDocuments() ([]domain.KnowledgeDocument, error)
+	GetKnowledgeDocument(id string) (domain.KnowledgeDocument, error)
+	UpdateKnowledgeDocument(domain.KnowledgeDocument) error
+	DeleteKnowledgeDocument(id string) error
+	IncrementKnowledgeDocumentHits(ids []string) error
+
 	CreateUser(domain.User) error
 	GetUserByUsername(username string) (domain.User, error)
 	ListUsers() ([]domain.User, error)

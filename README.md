@@ -8,7 +8,7 @@
 
 - 工具调用循环。模型自主决定调用哪些工具、最多五轮，逐步取证，全过程记录调用轨迹。
 - 流式诊断。通过 SSE 把每一步工具调用与结果实时推送到前端，而不是等待整段结果返回。
-- 知识检索。Markdown 文档按标题分块，BM25 关键词检索与向量检索（bge-m3）经 RRF 融合，回答附带引用来源。
+- 可管理知识库。Markdown 文档按标题分块，BM25 与向量检索（bge-m3）经 RRF 融合；支持文档导入、启停、版本哈希、索引重建和命中统计，回答附带引用来源。
 - 资产管理（CMDB）。服务器、数据库等资产按产品归档，支持 IP 反查；诊断时作为 `get_assets` / `lookup_ip` 工具供模型取证。
 - 主动巡检。为产品配置定时巡检任务，进程内调度器按周期自动跑诊断并沉淀巡检报告，按风险分级（正常/关注/高风险）标记。
 - 记忆空间。跨对话沉淀长期经验与环境事实，支持全局、产品、团队和个人四级作用域；诊断时只召回当前用户有权访问的记忆，模型也可主动调用 `recall_memory`。
@@ -60,6 +60,7 @@ backend/
     storage/         Repository：内存 / MySQL（业务数据与实验记录）
     tools/           Provider 接口、夜莺/Loki 适配器、资产源、演示数据
   knowledge-base/    历史故障复盘与运维手册
+  knowledge-managed/ 网页导入的知识文档（运行时目录，不提交 Git）
 frontend/
   src/               App.vue（导航/登录态）、router（守卫）、api（带令牌）、views/（含故障回放）
 docs/
@@ -96,6 +97,8 @@ npm run dev                # 默认 http://localhost:5173
 |---|---|
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 诊断模型。DeepSeek 为 `https://api.deepseek.com/v1` + `deepseek-chat`，需自备 API Key |
 | `EMBED_BASE_URL` / `EMBED_MODEL` | 向量检索嵌入模型，例如本机 Ollama 的 `bge-m3`；留空则只用 BM25 |
+| `KNOWLEDGE_PATH` / `KNOWLEDGE_DIR` | 单个内置知识文件和内置 Markdown 目录 |
+| `KNOWLEDGE_MANAGED_DIR` | 网页导入文档的受控存储目录，默认 `knowledge-managed` |
 | `N9E_BASE_URL` / `N9E_TOKEN` | 夜莺告警源，留空用演示数据 |
 | `LOG_BASE_URL` / `LOG_TOKEN` | Loki 日志源，留空用演示数据 |
 | `MYSQL_DSN` | 业务数据和诊断实验记录的持久化，留空用内存 |
@@ -138,6 +141,12 @@ POST /api/v1/data-sources/:name/test              连接检测（仅管理员）
 GET  /api/v1/alerts/active?product_id=payment
 GET  /api/v1/logs/search?product_id=payment&query=timeout
 GET  /api/v1/knowledge/search?query=告警检索
+GET  /api/v1/knowledge/status                    知识索引状态与版本
+GET  /api/v1/knowledge/documents                 知识文档清单
+POST /api/v1/knowledge/documents                 导入 Markdown（仅管理员）
+POST /api/v1/knowledge/documents/:id/toggle      启用或停用（仅管理员）
+DELETE /api/v1/knowledge/documents/:id            删除导入文档（仅管理员）
+POST /api/v1/knowledge/reindex                    原子重建索引（仅管理员）
 GET  /api/v1/assets?product_id=payment          资产列表
 GET  /api/v1/assets/lookup?ip=10.0.0.1          IP 反查资产
 POST /api/v1/diagnoses            一次性诊断
@@ -178,7 +187,7 @@ GET  /api/v1/audits
 
 ## 现状与后续
 
-已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、数据源检测、向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入、对照回放与实验批次、资产管理（CMDB）、主动巡检、四级作用域记忆、用户与团队权限、操作人审计、高风险处置审批、策略校验与模拟执行闭环。
+已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、数据源检测、可管理且版本化的向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入、对照回放与实验批次、资产管理（CMDB）、主动巡检、四级作用域记忆、用户与团队权限、操作人审计、高风险处置审批、策略校验与模拟执行闭环。
 
 计划中：
 
