@@ -18,6 +18,7 @@ type Claims struct {
 	UserID   string `json:"uid"`
 	Username string `json:"usr"`
 	Role     string `json:"role"`
+	TeamID   string `json:"team,omitempty"`
 	Exp      int64  `json:"exp"` // 过期时间（Unix 秒）
 }
 
@@ -41,7 +42,11 @@ func (s *Signer) sign(payload []byte) string {
 
 // Issue 为指定身份签发一个带过期时间的令牌。now 由调用方传入，便于测试。
 func (s *Signer) Issue(userID, username, role string, now time.Time) (string, error) {
-	c := Claims{UserID: userID, Username: username, Role: role, Exp: now.Add(s.ttl).Unix()}
+	return s.IssueWithTeam(userID, username, role, "", now)
+}
+
+func (s *Signer) IssueWithTeam(userID, username, role, teamID string, now time.Time) (string, error) {
+	c := Claims{UserID: userID, Username: username, Role: role, TeamID: teamID, Exp: now.Add(s.ttl).Unix()}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return "", err

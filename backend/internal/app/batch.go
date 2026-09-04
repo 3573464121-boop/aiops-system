@@ -36,7 +36,7 @@ func (s *Service) CreateExperimentBatch(ctx context.Context, req domain.Experime
 			return domain.ExperimentBatch{}, fmt.Errorf("案例 %s 不存在", id)
 		}
 	}
-	_, username, _ := actorFromContext(ctx)
+	_, username, _, _ := actorFromContext(ctx)
 	judgeModel, judgeSource := s.judgeInfo()
 	now := time.Now()
 	v := domain.ExperimentBatch{
@@ -49,8 +49,8 @@ func (s *Service) CreateExperimentBatch(ctx context.Context, req domain.Experime
 	if err := s.Repo.CreateExperimentBatch(v); err != nil {
 		return domain.ExperimentBatch{}, err
 	}
-	userID, _, role := actorFromContext(ctx)
-	go s.runExperimentBatch(WithActor(context.Background(), userID, username, role), v.ID)
+	userID, _, role, teamID := actorFromContext(ctx)
+	go s.runExperimentBatch(WithActorTeam(context.Background(), userID, username, role, teamID), v.ID)
 	s.addAudit(ctx, "create_experiment_batch", "", "success", 0)
 	return v, nil
 }

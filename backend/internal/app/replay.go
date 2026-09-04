@@ -19,7 +19,7 @@ func (s *Service) CreateFaultCase(ctx context.Context, req domain.FaultCaseReque
 	if err := normalizeFaultCaseRequest(&req); err != nil {
 		return domain.FaultCase{}, err
 	}
-	_, username, _ := actorFromContext(ctx)
+	_, username, _, _ := actorFromContext(ctx)
 	now := time.Now()
 	v := domain.FaultCase{
 		ID: fmt.Sprintf("CASE-%d", now.UnixNano()), Name: req.Name, ProductID: req.ProductID,
@@ -161,7 +161,7 @@ func (s *Service) ReviewReplayResult(ctx context.Context, id string, req domain.
 	if strings.TrimSpace(req.Note) == "" {
 		return domain.ReplayResult{}, fmt.Errorf("人工复核必须填写说明")
 	}
-	_, username, _ := actorFromContext(ctx)
+	_, username, _, _ := actorFromContext(ctx)
 	value := req.CauseOK
 	v.ReviewStatus = "rejected"
 	if req.Accepted {
@@ -188,7 +188,7 @@ func (s *Service) ReplayFaultCase(ctx context.Context, id string, req domain.Rep
 	if err != nil {
 		return nil, err
 	}
-	_, username, _ := actorFromContext(ctx)
+	_, username, _, _ := actorFromContext(ctx)
 	results := make([]domain.ReplayResult, 0, len(configs))
 	for _, config := range configs {
 		if err := ctx.Err(); err != nil {

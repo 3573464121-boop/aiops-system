@@ -69,7 +69,7 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 		{Role: "system", Content: agentSystemPrompt()},
 	}
 	// 召回相关的长期记忆，作为背景注入，并计入证据。
-	if recalled := s.recallMemories(req.ProductID, req.Question, maxRecall); len(recalled) > 0 {
+	if recalled := s.recallMemories(ctx, req.ProductID, req.Question, maxRecall); len(recalled) > 0 {
 		messages = append(messages, llm.Message{Role: "system", Content: memoryNote(recalled)})
 		evidence = append(evidence, memoriesToEvidence(recalled)...)
 		emit(domain.StreamEvent{Type: "status", Message: fmt.Sprintf("已召回 %d 条相关记忆", len(recalled))})
@@ -94,7 +94,7 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 		for _, tc := range msg.ToolCalls {
 			emit(domain.StreamEvent{Type: "tool_call", Tool: tc.Function.Name, Message: "调用工具 " + tc.Function.Name})
 			t0 := time.Now()
-			out, summary, status, a, evs := s.runToolCall(tc)
+			out, summary, status, a, evs := s.runToolCall(ctx, tc)
 			trace = append(trace, domain.ToolTrace{Tool: tc.Function.Name, Status: status, DurationMS: time.Since(t0).Milliseconds(), Summary: summary})
 			alerts = append(alerts, a...)
 			evidence = append(evidence, evs...)
@@ -139,7 +139,7 @@ func (s *Service) diagnoseAgent(ctx context.Context, req domain.DiagnosisRequest
 }
 
 // runToolCall 校验并执行一次工具调用，返回：喂回模型的结果串、审计摘要、状态、收集到的告警与证据。
-func (s *Service) runToolCall(tc llm.ToolCall) (out, summary, status string, alerts []domain.Alert, evs []domain.Evidence) {
+func (s *Service) runToolCall(ctx context.Context, tc llm.ToolCall) (out, summary, status string, alerts []domain.Alert, evs []domain.Evidence) {
 	args := map[string]any{}
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 	str := func(k string) string {
@@ -197,7 +197,7 @@ func (s *Service) runToolCall(tc llm.ToolCall) (out, summary, status string, ale
 		if q == "" {
 			return toolErr("缺少必填参数 query"), "缺少必填参数 query", "error", nil, nil
 		}
-		ms := s.recallMemories(str("product_id"), q, maxRecall)
+		ms := s.recallMemories(ctx, str("product_id"), q, maxRecall)
 		return toJSON(ms), fmt.Sprintf("召回 %d 条记忆", len(ms)), "success", nil, memoriesToEvidence(ms)
 	default:
 		msg := "未知工具：" + tc.Function.Name
@@ -278,7 +278,7 @@ func (s *Service) CreateApproval(ctx context.Context, req domain.ApprovalRequest
 	if req.Source == "" {
 		req.Source = "manual"
 	}
-	userID, username, _ := actorFromContext(ctx)
+	userID, username, _, _ := actorFromContext(ctx)
 	v := domain.Approval{
 		ID: fmt.Sprintf("APR-%d", time.Now().UnixNano()), ProductID: req.ProductID,
 		Action: req.Action, Risk: req.Risk, Reason: req.Reason, Source: req.Source,
@@ -322,7 +322,7 @@ func (s *Service) ReviewApproval(ctx context.Context, id string, req domain.Appr
 	if decision == "rejected" && comment == "" {
 		return domain.Approval{}, fmt.Errorf("驳回时必须填写原因")
 	}
-	userID, username, _ := actorFromContext(ctx)
+	userID, username, _, _ := actorFromContext(ctx)
 	v.Status, v.ReviewerID, v.ReviewerName = decision, userID, username
 	v.ReviewComment, v.ReviewedAt = comment, time.Now()
 	if err := s.Repo.UpdateApproval(v); err != nil {
@@ -343,7 +343,7 @@ func (s *Service) ExecuteApproval(ctx context.Context, id string, req domain.App
 	if v.Status != "approved" {
 		return domain.Approval{}, fmt.Errorf("只有已批准的申请可以确认执行，当前状态为 %s", v.Status)
 	}
-	userID, username, _ := actorFromContext(ctx)
+	userID, username, _, _ := actorFromContext(ctx)
 	v.Status, v.ExecutorID, v.ExecutorName = "executed", userID, username
 	v.ExecutionNote, v.ExecutedAt = strings.TrimSpace(req.Note), time.Now()
 	if err := s.Repo.UpdateApproval(v); err != nil {
@@ -364,7 +364,7 @@ func (s *Service) CancelApproval(ctx context.Context, id string) (domain.Approva
 	if v.Status != "pending" {
 		return domain.Approval{}, fmt.Errorf("只有待审批的申请可以撤销")
 	}
-	userID, _, role := actorFromContext(ctx)
+	userID, _, role, _ := actorFromContext(ctx)
 	if role != "admin" && (userID == "" || userID != v.RequesterID) {
 		return domain.Approval{}, fmt.Errorf("只能撤销自己发起的申请")
 	}
@@ -579,7 +579,7 @@ func (s *Service) Issues() ([]domain.Issue, error)      { return s.Repo.ListIssu
 func (s *Service) Audits() ([]domain.AuditEvent, error) { return s.Repo.ListAudits(100) }
 
 func (s *Service) addAudit(ctx context.Context, action, pid, status string, d int64) {
-	userID, username, role := actorFromContext(ctx)
+	userID, username, role, _ := actorFromContext(ctx)
 	_ = s.Repo.AddAudit(domain.AuditEvent{
 		ID:         fmt.Sprintf("AUD-%d", time.Now().UnixNano()),
 		Action:     action,

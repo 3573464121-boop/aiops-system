@@ -11,24 +11,44 @@ import (
 	"aiops-mvp/internal/llm"
 )
 
-const maxRecall = 5 // 每次诊断自动召回的记忆条数上限
+const maxRecall = 5
 
-// CreateMemory 新建一条长期记忆。scope 默认 global，kind 默认 fact。
 func (s *Service) CreateMemory(ctx context.Context, req domain.MemoryRequest) (domain.Memory, error) {
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
 		return domain.Memory{}, fmt.Errorf("记忆内容不能为空")
 	}
-	scope := strings.TrimSpace(req.Scope)
-	if scope != "product" {
-		scope = "global"
+	userID, username, role, actorTeam := actorFromContext(ctx)
+	scope := strings.ToLower(strings.TrimSpace(req.Scope))
+	if scope == "" {
+		scope = "personal"
 	}
-	pid := strings.TrimSpace(req.ProductID)
-	if scope == "product" && pid == "" {
-		return domain.Memory{}, fmt.Errorf("product 作用域必须指定 product_id")
+	if scope != "global" && scope != "product" && scope != "team" && scope != "personal" {
+		return domain.Memory{}, fmt.Errorf("不支持的记忆范围: %s", scope)
 	}
-	kind := strings.TrimSpace(req.Kind)
-	if kind == "" {
+	if (scope == "global" || scope == "product") && role != "admin" {
+		return domain.Memory{}, fmt.Errorf("全局或产品记忆仅管理员可创建")
+	}
+	if scope == "personal" && userID == "" {
+		return domain.Memory{}, fmt.Errorf("个人记忆需要登录用户")
+	}
+
+	productID := strings.TrimSpace(req.ProductID)
+	if scope == "product" && productID == "" {
+		return domain.Memory{}, fmt.Errorf("产品记忆必须指定 product_id")
+	}
+	teamID := strings.TrimSpace(req.TeamID)
+	if scope == "team" {
+		if teamID == "" {
+			teamID = actorTeam
+		}
+		if actorTeam == "" || !strings.EqualFold(teamID, actorTeam) {
+			return domain.Memory{}, fmt.Errorf("只能创建当前团队的记忆")
+		}
+	}
+
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	if kind != "fix" && kind != "preference" {
 		kind = "fact"
 	}
 	source := strings.TrimSpace(req.Source)
@@ -38,44 +58,89 @@ func (s *Service) CreateMemory(ctx context.Context, req domain.MemoryRequest) (d
 	m := domain.Memory{
 		ID:        fmt.Sprintf("MEM-%d", time.Now().UnixNano()),
 		Scope:     scope,
-		ProductID: pid,
+		ProductID: productID,
+		TeamID:    teamID,
+		OwnerID:   userID,
+		OwnerName: username,
 		Kind:      kind,
 		Content:   content,
 		Source:    source,
 		CreatedAt: time.Now(),
 	}
 	if err := s.Repo.CreateMemory(m); err != nil {
-		s.addAudit(ctx, "create_memory", pid, "error", 0)
+		s.addAudit(ctx, "create_memory", productID, "error", 0)
 		return domain.Memory{}, err
 	}
-	s.addAudit(ctx, "create_memory", pid, "success", 0)
+	s.addAudit(ctx, "create_memory", productID, "success", 0)
 	return m, nil
 }
 
-func (s *Service) ListMemories() ([]domain.Memory, error) { return s.Repo.ListMemories() }
+func (s *Service) ListMemories(ctx context.Context) ([]domain.Memory, error) {
+	all, err := s.Repo.ListMemories()
+	if err != nil {
+		return nil, err
+	}
+	userID, _, _, teamID := actorFromContext(ctx)
+	out := make([]domain.Memory, 0, len(all))
+	for _, m := range all {
+		if canReadMemory(m, userID, teamID) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
 func (s *Service) DeleteMemory(ctx context.Context, id string) error {
-	ms, err := s.Repo.ListMemories()
+	all, err := s.Repo.ListMemories()
 	if err != nil {
 		return err
 	}
-	productID := ""
-	for _, m := range ms {
-		if m.ID == id {
-			productID = m.ProductID
+	userID, _, role, teamID := actorFromContext(ctx)
+	var found *domain.Memory
+	for i := range all {
+		if all[i].ID == id {
+			found = &all[i]
 			break
 		}
 	}
+	if found == nil || !canReadMemory(*found, userID, teamID) {
+		return fmt.Errorf("记忆不存在或无权访问")
+	}
+	if !canDeleteMemory(*found, userID, role, teamID) {
+		return fmt.Errorf("无权删除该记忆")
+	}
 	if err := s.Repo.DeleteMemory(id); err != nil {
-		s.addAudit(ctx, "delete_memory", productID, "error", 0)
+		s.addAudit(ctx, "delete_memory", found.ProductID, "error", 0)
 		return err
 	}
-	s.addAudit(ctx, "delete_memory", productID, "success", 0)
+	s.addAudit(ctx, "delete_memory", found.ProductID, "success", 0)
 	return nil
 }
 
-// recallMemories 召回与当前诊断相关的记忆：候选=全局记忆 + 该产品记忆，按与问题的关键词重合度打分，取前 limit 条。
-func (s *Service) recallMemories(productID, query string, limit int) []domain.Memory {
-	all, err := s.Repo.ListMemories()
+func canReadMemory(m domain.Memory, userID, teamID string) bool {
+	switch m.Scope {
+	case "personal":
+		return userID != "" && m.OwnerID == userID
+	case "team":
+		return teamID != "" && strings.EqualFold(m.TeamID, teamID)
+	default:
+		return m.Scope == "global" || m.Scope == "product" || m.Scope == ""
+	}
+}
+
+func canDeleteMemory(m domain.Memory, userID, role, teamID string) bool {
+	switch m.Scope {
+	case "personal":
+		return userID != "" && m.OwnerID == userID
+	case "team":
+		return canReadMemory(m, userID, teamID) && (role == "admin" || m.OwnerID == userID)
+	default:
+		return role == "admin"
+	}
+}
+
+func (s *Service) recallMemories(ctx context.Context, productID, query string, limit int) []domain.Memory {
+	all, err := s.ListMemories(ctx)
 	if err != nil || len(all) == 0 {
 		return nil
 	}
@@ -84,67 +149,69 @@ func (s *Service) recallMemories(productID, query string, limit int) []domain.Me
 		m     domain.Memory
 		score int
 	}
-	cand := make([]scored, 0, len(all))
+	candidates := make([]scored, 0, len(all))
 	for _, m := range all {
 		if m.Scope == "product" && !strings.EqualFold(m.ProductID, productID) {
-			continue // 限定其它产品的记忆，跳过
+			continue
 		}
-		sc := overlap(tokenize(m.Content), terms)
-		if m.Scope == "product" && strings.EqualFold(m.ProductID, productID) {
-			sc++ // 同产品记忆略微加权
+		score := overlap(tokenize(m.Content), terms)
+		if m.Scope == "product" || m.Scope == "team" || m.Scope == "personal" {
+			score++
 		}
-		cand = append(cand, scored{m, sc})
+		candidates = append(candidates, scored{m: m, score: score})
 	}
-	// 有匹配的按分数优先；全无匹配时保留全局记忆作为通用背景（按时间倒序）。
-	sort.SliceStable(cand, func(i, j int) bool {
-		if cand[i].score != cand[j].score {
-			return cand[i].score > cand[j].score
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
 		}
-		return cand[i].m.CreatedAt.After(cand[j].m.CreatedAt)
+		return candidates[i].m.CreatedAt.After(candidates[j].m.CreatedAt)
 	})
 	out := make([]domain.Memory, 0, limit)
-	for _, c := range cand {
+	for _, candidate := range candidates {
 		if len(out) >= limit {
 			break
 		}
-		if c.score == 0 && c.m.Scope == "product" {
-			continue // 无关的产品记忆不强行塞入
-		}
-		out = append(out, c.m)
+		out = append(out, candidate.m)
 	}
 	return out
 }
 
-// memoryNote 把召回的记忆拼成一段供模型参考的系统提示。
-func memoryNote(ms []domain.Memory) string {
-	if len(ms) == 0 {
+func memoryScopeLabel(m domain.Memory) string {
+	switch m.Scope {
+	case "product":
+		return "产品/" + m.ProductID
+	case "team":
+		return "团队/" + m.TeamID
+	case "personal":
+		return "个人/" + m.OwnerName
+	default:
+		return "全局"
+	}
+}
+
+func memoryNote(memories []domain.Memory) string {
+	if len(memories) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("以下是与本次诊断相关的历史经验/环境记忆（供参考，仍须结合当前工具证据判断，勿凭记忆臆断）：\n")
-	for _, m := range ms {
-		scope := "全局"
-		if m.Scope == "product" {
-			scope = m.ProductID
-		}
-		b.WriteString(fmt.Sprintf("- [%s] %s\n", scope, m.Content))
+	b.WriteString("以下是与本次问题相关的历史经验或环境记忆。仅作参考，必须结合当前证据判断：\n")
+	for _, m := range memories {
+		b.WriteString(fmt.Sprintf("- [%s] %s\n", memoryScopeLabel(m), m.Content))
 	}
 	return b.String()
 }
 
-func memoriesToEvidence(ms []domain.Memory) []domain.Evidence {
-	out := make([]domain.Evidence, 0, len(ms))
-	for _, m := range ms {
-		scope := "global"
-		if m.Scope == "product" {
-			scope = m.ProductID
-		}
-		out = append(out, domain.Evidence{Type: "memory", Title: "记忆 · " + scope, Content: m.Content, Score: .5, Source: "memory/" + m.ID})
+func memoriesToEvidence(memories []domain.Memory) []domain.Evidence {
+	out := make([]domain.Evidence, 0, len(memories))
+	for _, m := range memories {
+		out = append(out, domain.Evidence{
+			Type: "memory", Title: "记忆 / " + memoryScopeLabel(m),
+			Content: m.Content, Score: .5, Source: "memory/" + m.ID,
+		})
 	}
 	return out
 }
 
-// ExtractMemory 用大模型从一段文本（通常是诊断结论）里提炼一条可长期复用的记忆草稿，交由用户确认后保存。
 func (s *Service) ExtractMemory(ctx context.Context, req domain.MemoryExtractRequest) (string, error) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
@@ -153,17 +220,15 @@ func (s *Service) ExtractMemory(ctx context.Context, req domain.MemoryExtractReq
 	if s.LLM == nil || !s.LLM.Enabled() {
 		return "", fmt.Errorf("未配置大模型，无法自动提炼")
 	}
-	sys := "你是运维知识沉淀助手。请从给定的诊断内容中提炼一条可长期复用的经验或环境事实，" +
-		"要求：一句话、具体、去掉时间戳与偶发数值、聚焦可复用的因果或结论。只输出这句话本身，不要解释、不要引号、不要前缀。"
+	system := "你是运维知识整理助手。从给定诊断内容中提炼一条可长期复用的经验或环境事实。" +
+		"要求一句话、具体、去掉时间戳和任务编号；不要把猜测写成确定结论。只输出这句话，不要解释、引号或前缀。"
 	user := "产品：" + req.ProductID + "\n诊断内容：\n" + text
-	msg, err := s.LLM.Chat(ctx, []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}, nil, false)
+	msg, err := s.LLM.Chat(ctx, []llm.Message{{Role: "system", Content: system}, {Role: "user", Content: user}}, nil, false)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(strings.Trim(msg.Content, "\"'“”")), nil
 }
-
-// ---------- 关键词工具 ----------
 
 func tokenize(s string) map[string]struct{} {
 	s = strings.ToLower(s)
@@ -171,15 +236,14 @@ func tokenize(s string) map[string]struct{} {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r >= 0x4e00 && r <= 0x9fff)
 	})
 	set := make(map[string]struct{}, len(fields))
-	for _, f := range fields {
-		if len([]rune(f)) >= 2 { // 过滤过短噪声词
-			set[f] = struct{}{}
+	for _, field := range fields {
+		if len([]rune(field)) >= 2 {
+			set[field] = struct{}{}
 		}
-		// 中文按二元切分，缓解无分词器时的召回
-		rs := []rune(f)
-		for i := 0; i+1 < len(rs); i++ {
-			if rs[i] >= 0x4e00 && rs[i] <= 0x9fff {
-				set[string(rs[i:i+2])] = struct{}{}
+		runes := []rune(field)
+		for i := 0; i+1 < len(runes); i++ {
+			if runes[i] >= 0x4e00 && runes[i] <= 0x9fff {
+				set[string(runes[i:i+2])] = struct{}{}
 			}
 		}
 	}
@@ -187,11 +251,11 @@ func tokenize(s string) map[string]struct{} {
 }
 
 func overlap(a, b map[string]struct{}) int {
-	n := 0
-	for k := range a {
-		if _, ok := b[k]; ok {
-			n++
+	count := 0
+	for term := range a {
+		if _, ok := b[term]; ok {
+			count++
 		}
 	}
-	return n
+	return count
 }

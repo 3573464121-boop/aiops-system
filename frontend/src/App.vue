@@ -5,7 +5,7 @@ import {
   DashboardOutlined, RobotOutlined, AlertOutlined, ReadOutlined, ProfileOutlined, AuditOutlined,
   BulbOutlined, ScheduleOutlined, DatabaseOutlined, ApartmentOutlined,
   CloudServerOutlined, ExperimentOutlined, FileSearchOutlined,
-  MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltFilled, LogoutOutlined, UserOutlined,
+  MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltFilled, LogoutOutlined, UserOutlined, TeamOutlined,
 } from '@ant-design/icons-vue'
 import { getUser, clearSession } from './api'
 
@@ -37,6 +37,7 @@ const nav = [
   { to: '/data-sources', label: '数据源', icon: CloudServerOutlined },
   { to: '/experiments', label: '实验记录', icon: ExperimentOutlined, adminOnly: true },
   { to: '/replay', label: '故障回放', icon: FileSearchOutlined, adminOnly: true },
+  { to: '/users', label: '用户与团队', icon: TeamOutlined, adminOnly: true },
 ]
 </script>
 

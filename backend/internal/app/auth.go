@@ -26,12 +26,20 @@ func (s *Service) Authenticate(username, password string) (domain.User, error) {
 
 // CreateUser 新建一个用户（密码用 bcrypt 存哈希）。role 非 admin 一律按 viewer。
 func (s *Service) CreateUser(ctx context.Context, username, password, role string) (domain.User, error) {
+	return s.CreateUserWithTeam(ctx, username, password, role, "operations")
+}
+
+func (s *Service) CreateUserWithTeam(ctx context.Context, username, password, role, teamID string) (domain.User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || strings.TrimSpace(password) == "" {
 		return domain.User{}, fmt.Errorf("用户名与密码不能为空")
 	}
 	if role != "admin" {
 		role = "viewer"
+	}
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		teamID = "operations"
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -42,6 +50,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 		Username:     username,
 		PasswordHash: string(hash),
 		Role:         role,
+		TeamID:       teamID,
 		CreatedAt:    time.Now(),
 	}
 	if err := s.Repo.CreateUser(u); err != nil {

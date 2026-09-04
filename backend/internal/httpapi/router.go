@@ -42,7 +42,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
-		token, err := signer.Issue(u.ID, u.Username, u.Role, time.Now())
+		token, err := signer.IssueWithTeam(u.ID, u.Username, u.Role, u.TeamID, time.Now())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "签发令牌失败"})
 			return
@@ -75,7 +75,8 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		c.Set("uid", claims.UserID)
 		c.Set("username", claims.Username)
 		c.Set("role", claims.Role)
-		c.Request = c.Request.WithContext(app.WithActor(c.Request.Context(), claims.UserID, claims.Username, claims.Role))
+		c.Set("team_id", claims.TeamID)
+		c.Request = c.Request.WithContext(app.WithActorTeam(c.Request.Context(), claims.UserID, claims.Username, claims.Role, claims.TeamID))
 		c.Next()
 	})
 
@@ -85,6 +86,7 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			"id":       c.GetString("uid"),
 			"username": c.GetString("username"),
 			"role":     c.GetString("role"),
+			"team_id":  c.GetString("team_id"),
 		})
 	})
 
@@ -319,14 +321,14 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		c.JSON(200, gin.H{"items": v, "total": len(v)})
 	})
 	api.GET("/memories", func(c *gin.Context) {
-		v, err := s.ListMemories()
+		v, err := s.ListMemories(c.Request.Context())
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(200, gin.H{"items": v, "total": len(v)})
 	})
-	api.POST("/memories", requireAdmin, func(c *gin.Context) {
+	api.POST("/memories", func(c *gin.Context) {
 		var req domain.MemoryRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -339,14 +341,14 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		}
 		c.JSON(http.StatusCreated, v)
 	})
-	api.DELETE("/memories/:id", requireAdmin, func(c *gin.Context) {
+	api.DELETE("/memories/:id", func(c *gin.Context) {
 		if err := s.DeleteMemory(c.Request.Context(), c.Param("id")); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(200, gin.H{"status": "ok"})
 	})
-	api.POST("/memories/extract", requireAdmin, func(c *gin.Context) {
+	api.POST("/memories/extract", func(c *gin.Context) {
 		var req domain.MemoryExtractRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -372,12 +374,13 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 			Username string `json:"username"`
 			Password string `json:"password"`
 			Role     string `json:"role"`
+			TeamID   string `json:"team_id"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		u, err := s.CreateUser(c.Request.Context(), req.Username, req.Password, req.Role)
+		u, err := s.CreateUserWithTeam(c.Request.Context(), req.Username, req.Password, req.Role, req.TeamID)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return

@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Service) recordDiagnosisRun(ctx context.Context, req domain.DiagnosisRequest, result domain.DiagnosisResult, duration time.Duration) {
-	_, username, _ := actorFromContext(ctx)
+	_, username, _, _ := actorFromContext(ctx)
 	model := ""
 	if s.LLM != nil {
 		model = s.LLM.Model
@@ -69,7 +69,7 @@ func (s *Service) ReviewDiagnosisRun(ctx context.Context, id string, req domain.
 	if req.Included && goldCause == "" {
 		return domain.DiagnosisRun{}, fmt.Errorf("纳入论文数据集时必须填写标准根因")
 	}
-	_, username, _ := actorFromContext(ctx)
+	_, username, _, _ := actorFromContext(ctx)
 	v.Included = req.Included
 	v.GoldCause = goldCause
 	v.ReviewerNote = strings.TrimSpace(req.Note)

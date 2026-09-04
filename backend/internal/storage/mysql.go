@@ -85,6 +85,9 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			id VARCHAR(64) PRIMARY KEY,
 			scope VARCHAR(16) NOT NULL,
 			product_id VARCHAR(128) NOT NULL DEFAULT '',
+			team_id VARCHAR(64) NOT NULL DEFAULT '',
+			owner_id VARCHAR(64) NOT NULL DEFAULT '',
+			owner_name VARCHAR(64) NOT NULL DEFAULT '',
 			kind VARCHAR(16) NOT NULL DEFAULT '',
 			content TEXT NOT NULL,
 			source VARCHAR(32) NOT NULL DEFAULT '',
@@ -96,6 +99,7 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			username VARCHAR(64) NOT NULL UNIQUE,
 			password_hash VARCHAR(255) NOT NULL,
 			role VARCHAR(16) NOT NULL DEFAULT 'viewer',
+			team_id VARCHAR(64) NOT NULL DEFAULT 'operations',
 			created_at DATETIME NOT NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS approvals (
@@ -230,6 +234,10 @@ func (m *MySQL) migrate(ctx context.Context) error {
 		`ALTER TABLE replay_results ADD COLUMN reviewed_at DATETIME NULL`,
 		`ALTER TABLE replay_results ADD COLUMN batch_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE replay_results ADD COLUMN trial INT NOT NULL DEFAULT 1`,
+		`ALTER TABLE memories ADD COLUMN team_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE memories ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE memories ADD COLUMN owner_name VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN team_id VARCHAR(64) NOT NULL DEFAULT 'operations'`,
 	} {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("audit_events alter migration failed: %w", err)
@@ -375,12 +383,12 @@ func (m *MySQL) ListInspectionReports(taskID string, limit int) ([]domain.Inspec
 }
 
 func (m *MySQL) CreateMemory(v domain.Memory) error {
-	_, err := m.db.Exec(`INSERT INTO memories (id, scope, product_id, kind, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.Scope, v.ProductID, v.Kind, v.Content, v.Source, v.CreatedAt)
+	_, err := m.db.Exec(`INSERT INTO memories (id, scope, product_id, team_id, owner_id, owner_name, kind, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.Scope, v.ProductID, v.TeamID, v.OwnerID, v.OwnerName, v.Kind, v.Content, v.Source, v.CreatedAt)
 	return err
 }
 func (m *MySQL) ListMemories() ([]domain.Memory, error) {
-	rows, err := m.db.Query(`SELECT id, scope, product_id, kind, content, source, created_at FROM memories ORDER BY created_at DESC LIMIT 500`)
+	rows, err := m.db.Query(`SELECT id, scope, product_id, team_id, owner_id, owner_name, kind, content, source, created_at FROM memories ORDER BY created_at DESC LIMIT 500`)
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +396,7 @@ func (m *MySQL) ListMemories() ([]domain.Memory, error) {
 	out := make([]domain.Memory, 0)
 	for rows.Next() {
 		var v domain.Memory
-		if err = rows.Scan(&v.ID, &v.Scope, &v.ProductID, &v.Kind, &v.Content, &v.Source, &v.CreatedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.Scope, &v.ProductID, &v.TeamID, &v.OwnerID, &v.OwnerName, &v.Kind, &v.Content, &v.Source, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -401,21 +409,21 @@ func (m *MySQL) DeleteMemory(id string) error {
 }
 
 func (m *MySQL) CreateUser(v domain.User) error {
-	_, err := m.db.Exec(`INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`,
-		v.ID, v.Username, v.PasswordHash, v.Role, v.CreatedAt)
+	_, err := m.db.Exec(`INSERT INTO users (id, username, password_hash, role, team_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		v.ID, v.Username, v.PasswordHash, v.Role, v.TeamID, v.CreatedAt)
 	return err
 }
 func (m *MySQL) GetUserByUsername(username string) (domain.User, error) {
 	var v domain.User
-	err := m.db.QueryRow(`SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?`, username).
-		Scan(&v.ID, &v.Username, &v.PasswordHash, &v.Role, &v.CreatedAt)
+	err := m.db.QueryRow(`SELECT id, username, password_hash, role, team_id, created_at FROM users WHERE username = ?`, username).
+		Scan(&v.ID, &v.Username, &v.PasswordHash, &v.Role, &v.TeamID, &v.CreatedAt)
 	if err != nil {
 		return domain.User{}, err
 	}
 	return v, nil
 }
 func (m *MySQL) ListUsers() ([]domain.User, error) {
-	rows, err := m.db.Query(`SELECT id, username, password_hash, role, created_at FROM users ORDER BY created_at ASC`)
+	rows, err := m.db.Query(`SELECT id, username, password_hash, role, team_id, created_at FROM users ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +431,7 @@ func (m *MySQL) ListUsers() ([]domain.User, error) {
 	out := make([]domain.User, 0)
 	for rows.Next() {
 		var v domain.User
-		if err = rows.Scan(&v.ID, &v.Username, &v.PasswordHash, &v.Role, &v.CreatedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.Username, &v.PasswordHash, &v.Role, &v.TeamID, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

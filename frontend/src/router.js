@@ -13,7 +13,8 @@ import Workflow from './views/Workflow.vue'
 import DataSources from './views/DataSources.vue'
 import Experiments from './views/Experiments.vue'
 import Replay from './views/Replay.vue'
-import { isLoggedIn } from './api'
+import Users from './views/Users.vue'
+import { isAdmin, isLoggedIn } from './api'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -30,6 +31,7 @@ const routes = [
   { path: '/data-sources', component: DataSources },
   { path: '/experiments', component: Experiments },
   { path: '/replay', component: Replay },
+  { path: '/users', component: Users, meta: { adminOnly: true } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
@@ -40,6 +42,7 @@ router.beforeEach((to) => {
   const authed = isLoggedIn()
   if (!to.meta.public && !authed) return '/login'
   if (to.path === '/login' && authed) return '/'
+  if (to.meta.adminOnly && !isAdmin()) return '/'
   return true
 })
 

@@ -305,6 +305,9 @@ type InspectionReport struct {
 // Scope 目前支持 global（全局）与 product（限定某产品）；个人/团队作用域待认证模块接入后再细分。
 type Memory struct {
 	ID        string    `json:"id"`
+	TeamID    string    `json:"team_id"`
+	OwnerID   string    `json:"owner_id"`
+	OwnerName string    `json:"owner_name"`
 	Scope     string    `json:"scope"`      // global | product
 	ProductID string    `json:"product_id"` // scope=product 时生效
 	Kind      string    `json:"kind"`       // fact | fix | preference
@@ -314,6 +317,7 @@ type Memory struct {
 }
 type MemoryRequest struct {
 	Scope     string `json:"scope"`
+	TeamID    string `json:"team_id"`
 	ProductID string `json:"product_id"`
 	Kind      string `json:"kind"`
 	Content   string `json:"content" binding:"required"`
@@ -327,6 +331,7 @@ type MemoryExtractRequest struct {
 // User 是系统登录用户。Role 目前分 admin（管理员，可管理配置）与 viewer（只读，可查看与诊断）。
 type User struct {
 	ID           string    `json:"id"`
+	TeamID       string    `json:"team_id"`
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"` // 只存 bcrypt 哈希，绝不出现在任何响应里
 	Role         string    `json:"role"`
