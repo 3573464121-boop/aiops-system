@@ -118,6 +118,10 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			executor_id VARCHAR(64) NOT NULL DEFAULT '',
 			executor_name VARCHAR(64) NOT NULL DEFAULT '',
 			execution_note VARCHAR(512) NOT NULL DEFAULT '',
+			execution_mode VARCHAR(16) NOT NULL DEFAULT '',
+			execution_kind VARCHAR(32) NOT NULL DEFAULT '',
+			execution_output TEXT NOT NULL,
+			execution_duration_ms BIGINT NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL,
 			reviewed_at DATETIME NULL,
 			executed_at DATETIME NULL,
@@ -238,6 +242,10 @@ func (m *MySQL) migrate(ctx context.Context) error {
 		`ALTER TABLE memories ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE memories ADD COLUMN owner_name VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN team_id VARCHAR(64) NOT NULL DEFAULT 'operations'`,
+		`ALTER TABLE approvals ADD COLUMN execution_mode VARCHAR(16) NOT NULL DEFAULT ''`,
+		`ALTER TABLE approvals ADD COLUMN execution_kind VARCHAR(32) NOT NULL DEFAULT ''`,
+		`ALTER TABLE approvals ADD COLUMN execution_output TEXT NOT NULL`,
+		`ALTER TABLE approvals ADD COLUMN execution_duration_ms BIGINT NOT NULL DEFAULT 0`,
 	} {
 		if _, err := m.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("audit_events alter migration failed: %w", err)
@@ -445,12 +453,12 @@ func (m *MySQL) CountUsers() (int, error) {
 }
 
 func (m *MySQL) CreateApproval(v domain.Approval) error {
-	_, err := m.db.Exec(`INSERT INTO approvals (id, product_id, action_name, risk, reason, source, status, requester_id, requester_name, reviewer_id, reviewer_name, review_comment, executor_id, executor_name, execution_note, created_at, reviewed_at, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.ProductID, v.Action, v.Risk, v.Reason, v.Source, v.Status, v.RequesterID, v.RequesterName, v.ReviewerID, v.ReviewerName, v.ReviewComment, v.ExecutorID, v.ExecutorName, v.ExecutionNote, v.CreatedAt, nullTime(v.ReviewedAt), nullTime(v.ExecutedAt))
+	_, err := m.db.Exec(`INSERT INTO approvals (id, product_id, action_name, risk, reason, source, status, requester_id, requester_name, reviewer_id, reviewer_name, review_comment, executor_id, executor_name, execution_note, execution_mode, execution_kind, execution_output, execution_duration_ms, created_at, reviewed_at, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.ProductID, v.Action, v.Risk, v.Reason, v.Source, v.Status, v.RequesterID, v.RequesterName, v.ReviewerID, v.ReviewerName, v.ReviewComment, v.ExecutorID, v.ExecutorName, v.ExecutionNote, v.ExecutionMode, v.ExecutionKind, v.ExecutionOutput, v.ExecutionDurationMS, v.CreatedAt, nullTime(v.ReviewedAt), nullTime(v.ExecutedAt))
 	return err
 }
 
-const approvalColumns = `id, product_id, action_name, risk, reason, source, status, requester_id, requester_name, reviewer_id, reviewer_name, review_comment, executor_id, executor_name, execution_note, created_at, reviewed_at, executed_at`
+const approvalColumns = `id, product_id, action_name, risk, reason, source, status, requester_id, requester_name, reviewer_id, reviewer_name, review_comment, executor_id, executor_name, execution_note, execution_mode, execution_kind, execution_output, execution_duration_ms, created_at, reviewed_at, executed_at`
 
 type approvalScanner interface {
 	Scan(dest ...any) error
@@ -459,7 +467,7 @@ type approvalScanner interface {
 func scanApproval(scanner approvalScanner) (domain.Approval, error) {
 	var v domain.Approval
 	var reviewed, executed sql.NullTime
-	err := scanner.Scan(&v.ID, &v.ProductID, &v.Action, &v.Risk, &v.Reason, &v.Source, &v.Status, &v.RequesterID, &v.RequesterName, &v.ReviewerID, &v.ReviewerName, &v.ReviewComment, &v.ExecutorID, &v.ExecutorName, &v.ExecutionNote, &v.CreatedAt, &reviewed, &executed)
+	err := scanner.Scan(&v.ID, &v.ProductID, &v.Action, &v.Risk, &v.Reason, &v.Source, &v.Status, &v.RequesterID, &v.RequesterName, &v.ReviewerID, &v.ReviewerName, &v.ReviewComment, &v.ExecutorID, &v.ExecutorName, &v.ExecutionNote, &v.ExecutionMode, &v.ExecutionKind, &v.ExecutionOutput, &v.ExecutionDurationMS, &v.CreatedAt, &reviewed, &executed)
 	if reviewed.Valid {
 		v.ReviewedAt = reviewed.Time
 	}
@@ -497,8 +505,8 @@ func (m *MySQL) GetApproval(id string) (domain.Approval, error) {
 }
 
 func (m *MySQL) UpdateApproval(v domain.Approval) error {
-	_, err := m.db.Exec(`UPDATE approvals SET status=?, reviewer_id=?, reviewer_name=?, review_comment=?, executor_id=?, executor_name=?, execution_note=?, reviewed_at=?, executed_at=? WHERE id=?`,
-		v.Status, v.ReviewerID, v.ReviewerName, v.ReviewComment, v.ExecutorID, v.ExecutorName, v.ExecutionNote, nullTime(v.ReviewedAt), nullTime(v.ExecutedAt), v.ID)
+	_, err := m.db.Exec(`UPDATE approvals SET status=?, reviewer_id=?, reviewer_name=?, review_comment=?, executor_id=?, executor_name=?, execution_note=?, execution_mode=?, execution_kind=?, execution_output=?, execution_duration_ms=?, reviewed_at=?, executed_at=? WHERE id=?`,
+		v.Status, v.ReviewerID, v.ReviewerName, v.ReviewComment, v.ExecutorID, v.ExecutorName, v.ExecutionNote, v.ExecutionMode, v.ExecutionKind, v.ExecutionOutput, v.ExecutionDurationMS, nullTime(v.ReviewedAt), nullTime(v.ExecutedAt), v.ID)
 	return err
 }
 

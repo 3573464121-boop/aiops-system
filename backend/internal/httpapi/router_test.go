@@ -108,7 +108,11 @@ func TestApprovalPermissionsAndLifecycle(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("admin review: want 200 got %d: %s", w.Code, w.Body.String())
 	}
-	w = request(http.MethodPost, "/api/v1/approvals/"+created.ID+"/execute", `{"note":"人工执行完成"}`, adminToken)
+	w = request(http.MethodGet, "/api/v1/approvals/"+created.ID+"/execution-plan", ``, adminToken)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"mode":"simulate"`) || !strings.Contains(w.Body.String(), `"allowed":true`) {
+		t.Fatalf("execution plan: want allowed simulation got %d: %s", w.Code, w.Body.String())
+	}
+	w = request(http.MethodPost, "/api/v1/approvals/"+created.ID+"/execute", `{"note":"人工执行完成","confirm_action":"回滚发布"}`, adminToken)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"executed"`) {
 		t.Fatalf("execute: want executed got %d: %s", w.Code, w.Body.String())
 	}

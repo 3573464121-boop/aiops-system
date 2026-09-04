@@ -403,6 +403,14 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		}
 		c.JSON(200, v)
 	})
+	api.GET("/approvals/:id/execution-plan", requireAdmin, func(c *gin.Context) {
+		v, err := s.PreviewApprovalExecution(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, v)
+	})
 	api.POST("/approvals", func(c *gin.Context) {
 		var req domain.ApprovalRequest
 		if err := c.ShouldBindJSON(&req); err != nil {

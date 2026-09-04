@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aiops-mvp/internal/domain"
+	"aiops-mvp/internal/executor"
 	"aiops-mvp/internal/llm"
 	"aiops-mvp/internal/storage"
 	"aiops-mvp/internal/tools"
@@ -19,6 +20,7 @@ type Service struct {
 	LLM        *llm.Client
 	Judge      *llm.Client
 	Repo       storage.Repository
+	Executor   *executor.Simulator
 	batchMu    sync.Mutex // Serializes experiment batches to limit model pressure.
 	inspectMu  sync.Mutex // 保证同一时刻只跑一个巡检任务，避免并发压垮大模型
 	approvalMu sync.Mutex // 串行化审批状态迁移，避免重复审批或执行
@@ -29,7 +31,7 @@ func New(t *tools.Service, l *llm.Client, repos ...storage.Repository) *Service 
 	if len(repos) > 0 && repos[0] != nil {
 		repo = repos[0]
 	}
-	return &Service{Tools: t, LLM: l, Repo: repo}
+	return &Service{Tools: t, LLM: l, Repo: repo, Executor: executor.NewSimulator()}
 }
 
 const maxToolRounds = 5
@@ -304,6 +306,14 @@ func (s *Service) GetApproval(id string) (domain.Approval, error) {
 	return s.Repo.GetApproval(strings.TrimSpace(id))
 }
 
+func (s *Service) PreviewApprovalExecution(id string) (domain.ExecutionPlan, error) {
+	v, err := s.Repo.GetApproval(strings.TrimSpace(id))
+	if err != nil {
+		return domain.ExecutionPlan{}, err
+	}
+	return s.Executor.Preview(v), nil
+}
+
 func (s *Service) ReviewApproval(ctx context.Context, id string, req domain.ApprovalDecisionRequest) (domain.Approval, error) {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
@@ -343,9 +353,19 @@ func (s *Service) ExecuteApproval(ctx context.Context, id string, req domain.App
 	if v.Status != "approved" {
 		return domain.Approval{}, fmt.Errorf("只有已批准的申请可以确认执行，当前状态为 %s", v.Status)
 	}
+	if strings.TrimSpace(req.ConfirmAction) != v.Action {
+		return domain.Approval{}, fmt.Errorf("确认内容与处置动作不一致")
+	}
+	result, err := s.Executor.Execute(ctx, v)
+	if err != nil {
+		s.addAudit(ctx, "execute_approval", v.ProductID, "blocked", 0)
+		return domain.Approval{}, err
+	}
 	userID, username, _, _ := actorFromContext(ctx)
 	v.Status, v.ExecutorID, v.ExecutorName = "executed", userID, username
 	v.ExecutionNote, v.ExecutedAt = strings.TrimSpace(req.Note), time.Now()
+	v.ExecutionMode, v.ExecutionKind = result.Mode, result.Kind
+	v.ExecutionOutput, v.ExecutionDurationMS = result.Output, result.DurationMS
 	if err := s.Repo.UpdateApproval(v); err != nil {
 		s.addAudit(ctx, "execute_approval", v.ProductID, "error", 0)
 		return domain.Approval{}, err

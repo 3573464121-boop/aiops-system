@@ -14,6 +14,11 @@ const reviewing = ref(false)
 const detail = ref(null)
 const reviewTarget = ref(null)
 const reviewForm = ref({ decision: 'approved', comment: '' })
+const executeOpen = ref(false)
+const executing = ref(false)
+const executeTarget = ref(null)
+const executionPlan = ref(null)
+const executeForm = ref({ confirm_action: '', note: '' })
 const form = ref({ product_id: '', action: '', risk: 'high', reason: '', source: 'manual' })
 const currentUser = getUser()
 const admin = isAdmin()
@@ -92,19 +97,33 @@ async function review() {
   finally { reviewing.value = false }
 }
 
-function execute(record) {
-  Modal.confirm({
-    title: '确认处置已经执行？',
-    content: '系统只记录执行结果，不会自动对生产环境执行重启、回滚或扩容操作。',
-    okText: '确认已执行', cancelText: '取消',
-    async onOk() {
-      try {
-        await api(`/approvals/${record.id}/execute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '管理员确认已人工执行' }) })
-        message.success('执行结果已记录')
-        await load()
-      } catch (e) { message.error(e.message); throw e }
-    },
-  })
+async function openExecution(record) {
+  try {
+    executeTarget.value = record
+    executionPlan.value = await api(`/approvals/${record.id}/execution-plan`)
+    executeForm.value = { confirm_action: '', note: '' }
+    executeOpen.value = true
+  } catch (e) { message.error(e.message) }
+}
+
+async function execute() {
+  if (!executionPlan.value?.allowed) return
+  if (executeForm.value.confirm_action.trim() !== executeTarget.value.action) {
+    message.warning('请完整输入处置动作以确认')
+    return
+  }
+  executing.value = true
+  try {
+    await api(`/approvals/${executeTarget.value.id}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(executeForm.value),
+    })
+    message.success('模拟执行完成，结果已留档')
+    executeOpen.value = false
+    await load()
+  } catch (e) { message.error(e.message) }
+  finally { executing.value = false }
 }
 
 function cancel(record) {
@@ -157,7 +176,7 @@ onMounted(load)
               <a-button type="link" size="small" @click="openReview(record, 'approved')">批准</a-button>
               <a-button type="link" size="small" danger @click="openReview(record, 'rejected')">驳回</a-button>
             </template>
-            <a-button v-if="admin && record.status === 'approved'" type="link" size="small" @click="execute(record)">确认执行</a-button>
+            <a-button v-if="admin && record.status === 'approved'" type="link" size="small" @click="openExecution(record)">执行计划</a-button>
             <a-button v-if="canCancel(record)" type="link" size="small" danger @click="cancel(record)">撤销</a-button>
           </template>
         </template>
@@ -178,6 +197,39 @@ onMounted(load)
       <a-textarea v-model:value="reviewForm.comment" :rows="4" :placeholder="reviewForm.decision === 'rejected' ? '请填写驳回原因（必填）' : '填写审批意见（选填）'" />
     </a-modal>
 
+    <a-modal
+      v-model:open="executeOpen"
+      title="受控处置执行计划"
+      :confirm-loading="executing"
+      :ok-button-props="{ disabled: !executionPlan?.allowed }"
+      ok-text="执行模拟计划"
+      cancel-text="取消"
+      @ok="execute"
+    >
+      <template v-if="executionPlan">
+        <a-alert
+          :type="executionPlan.allowed ? 'info' : 'error'"
+          :message="executionPlan.allowed ? '策略校验通过，仅执行模拟计划' : '策略已阻止执行'"
+          :description="executionPlan.block_reason || '不会调用 Shell、Kubernetes 或任何生产接口'"
+          show-icon
+          style="margin-bottom:16px"
+        />
+        <a-descriptions :column="1" size="small" bordered style="margin-bottom:16px">
+          <a-descriptions-item label="动作类型">{{ executionPlan.kind }}</a-descriptions-item>
+          <a-descriptions-item label="执行模式"><a-tag color="blue">{{ executionPlan.mode }}</a-tag></a-descriptions-item>
+        </a-descriptions>
+        <a-steps direction="vertical" size="small" :current="-1" :items="executionPlan.steps.map((title) => ({ title }))" />
+        <a-form v-if="executionPlan.allowed" layout="vertical">
+          <a-form-item label="复述处置动作" required>
+            <a-input v-model:value="executeForm.confirm_action" :placeholder="executeTarget?.action" />
+          </a-form-item>
+          <a-form-item label="执行备注">
+            <a-textarea v-model:value="executeForm.note" :rows="2" placeholder="记录本次模拟执行的背景或观察" />
+          </a-form-item>
+        </a-form>
+      </template>
+    </a-modal>
+
     <a-drawer :open="!!detail" title="审批详情" width="min(520px, 100vw)" @close="detail = null">
       <a-descriptions v-if="detail" :column="1" bordered size="small">
         <a-descriptions-item label="审批编号">{{ detail.id }}</a-descriptions-item>
@@ -192,6 +244,9 @@ onMounted(load)
         <a-descriptions-item label="审批意见">{{ detail.review_comment || '-' }}</a-descriptions-item>
         <a-descriptions-item label="执行人">{{ detail.executor_name || '-' }}</a-descriptions-item>
         <a-descriptions-item label="执行记录">{{ detail.execution_note || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="执行模式">{{ detail.execution_mode || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="动作类型">{{ detail.execution_kind || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="执行结果">{{ detail.execution_output || '-' }}</a-descriptions-item>
       </a-descriptions>
     </a-drawer>
   </div>

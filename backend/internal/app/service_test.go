@@ -71,11 +71,15 @@ func TestApprovalLifecycle(t *testing.T) {
 	if v.Status != "approved" || v.ReviewerName != "admin" {
 		t.Fatalf("unexpected reviewed approval: %+v", v)
 	}
-	v, err = s.ExecuteApproval(admin, v.ID, domain.ApprovalExecutionRequest{Note: "人工回滚完成"})
+	plan, err := s.PreviewApprovalExecution(v.ID)
+	if err != nil || !plan.Allowed || plan.Mode != "simulate" || plan.Kind != "rollback_release" {
+		t.Fatalf("unexpected execution plan: %+v err=%v", plan, err)
+	}
+	v, err = s.ExecuteApproval(admin, v.ID, domain.ApprovalExecutionRequest{Note: "人工回滚完成", ConfirmAction: v.Action})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Status != "executed" || v.ExecutorName != "admin" || v.ExecutionNote == "" {
+	if v.Status != "executed" || v.ExecutorName != "admin" || v.ExecutionNote == "" || v.ExecutionMode != "simulate" || v.ExecutionOutput == "" {
 		t.Fatalf("unexpected executed approval: %+v", v)
 	}
 	if _, err := s.ReviewApproval(admin, v.ID, domain.ApprovalDecisionRequest{Decision: "approved"}); err == nil {

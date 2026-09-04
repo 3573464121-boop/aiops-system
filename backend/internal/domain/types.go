@@ -69,28 +69,44 @@ type ApprovalDecisionRequest struct {
 }
 
 type ApprovalExecutionRequest struct {
-	Note string `json:"note"`
+	Note          string `json:"note"`
+	ConfirmAction string `json:"confirm_action"`
+}
+
+type ExecutionPlan struct {
+	ApprovalID           string    `json:"approval_id"`
+	Kind                 string    `json:"kind"`
+	Mode                 string    `json:"mode"`
+	Allowed              bool      `json:"allowed"`
+	BlockReason          string    `json:"block_reason"`
+	Steps                []string  `json:"steps"`
+	RequiresConfirmation bool      `json:"requires_confirmation"`
+	GeneratedAt          time.Time `json:"generated_at"`
 }
 
 type Approval struct {
-	ID            string    `json:"id"`
-	ProductID     string    `json:"product_id"`
-	Action        string    `json:"action"`
-	Risk          string    `json:"risk"`
-	Reason        string    `json:"reason"`
-	Source        string    `json:"source"`
-	Status        string    `json:"status"` // pending | approved | rejected | executed | cancelled
-	RequesterID   string    `json:"requester_id"`
-	RequesterName string    `json:"requester_name"`
-	ReviewerID    string    `json:"reviewer_id"`
-	ReviewerName  string    `json:"reviewer_name"`
-	ReviewComment string    `json:"review_comment"`
-	ExecutorID    string    `json:"executor_id"`
-	ExecutorName  string    `json:"executor_name"`
-	ExecutionNote string    `json:"execution_note"`
-	CreatedAt     time.Time `json:"created_at"`
-	ReviewedAt    time.Time `json:"reviewed_at"`
-	ExecutedAt    time.Time `json:"executed_at"`
+	ID                  string    `json:"id"`
+	ProductID           string    `json:"product_id"`
+	Action              string    `json:"action"`
+	Risk                string    `json:"risk"`
+	Reason              string    `json:"reason"`
+	Source              string    `json:"source"`
+	Status              string    `json:"status"` // pending | approved | rejected | executed | cancelled
+	RequesterID         string    `json:"requester_id"`
+	RequesterName       string    `json:"requester_name"`
+	ReviewerID          string    `json:"reviewer_id"`
+	ReviewerName        string    `json:"reviewer_name"`
+	ReviewComment       string    `json:"review_comment"`
+	ExecutorID          string    `json:"executor_id"`
+	ExecutorName        string    `json:"executor_name"`
+	ExecutionNote       string    `json:"execution_note"`
+	ExecutionMode       string    `json:"execution_mode"`
+	ExecutionKind       string    `json:"execution_kind"`
+	ExecutionOutput     string    `json:"execution_output"`
+	ExecutionDurationMS int64     `json:"execution_duration_ms"`
+	CreatedAt           time.Time `json:"created_at"`
+	ReviewedAt          time.Time `json:"reviewed_at"`
+	ExecutedAt          time.Time `json:"executed_at"`
 }
 
 type DiagnosisResult struct {
