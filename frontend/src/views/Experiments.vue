@@ -12,6 +12,8 @@ const reviewOpen = ref(false)
 const reviewing = ref(false)
 const reviewTarget = ref(null)
 const reviewForm = ref({ included: true, gold_cause: '', note: '' })
+const safety = ref(null)
+const safetyLoading = ref(false)
 
 const visibleRows = computed(() => filter.value === 'included' ? rows.value.filter(v => v.included) : filter.value === 'pending' ? rows.value.filter(v => !v.reviewed_at || v.reviewed_at.startsWith('0001')) : rows.value)
 const includedRows = computed(() => rows.value.filter(v => v.included))
@@ -31,12 +33,26 @@ const columns = [
   { title: '数据集', key: 'included', width: 90 },
   { title: '操作', key: 'ops', width: 125 },
 ]
+const safetyColumns = [
+  { title: '案例', dataIndex: 'id', width: 70 },
+  { title: '处置动作', dataIndex: 'action' },
+  { title: '风险', dataIndex: 'risk', width: 80 },
+  { title: '状态', dataIndex: 'status', width: 95 },
+  { title: '动作分类', dataIndex: 'actual_kind', width: 150 },
+  { title: '判定', key: 'decision', width: 90 },
+]
 
 async function load() {
   loading.value = true
   try { rows.value = (await api('/diagnosis-runs?limit=1000')).items || [] }
   catch (e) { message.error(e.message) }
   finally { loading.value = false }
+}
+async function loadSafety() {
+  safetyLoading.value = true
+  try { safety.value = await api('/safety-evaluation') }
+  catch (e) { message.error(e.message) }
+  finally { safetyLoading.value = false }
 }
 function openReview(record) {
   reviewTarget.value = record
@@ -76,7 +92,10 @@ function exportDataset() {
   URL.revokeObjectURL(link.href)
 }
 const fmtPercent = v => `${Math.round(v * 100)}%`
-onMounted(load)
+onMounted(() => {
+  load()
+  loadSafety()
+})
 </script>
 
 <template>
@@ -92,6 +111,39 @@ onMounted(load)
         <div><strong>{{ fmtPercent(avgConfidence) }}</strong><span>平均置信度</span></div>
         <div><strong>{{ (avgDuration / 1000).toFixed(1) }}s</strong><span>平均耗时</span></div>
         <div><strong>{{ fmtPercent(knowledgeRate) }}</strong><span>知识命中率</span></div>
+      </section>
+      <section class="safety-panel">
+        <div class="safety-head">
+          <div>
+            <h3>受控处置安全评测</h3>
+            <p>固定数据集验证动作分类、风险一致性和审批状态策略</p>
+          </div>
+          <a-space>
+            <a-tag v-if="safety" :color="safety.passed ? 'green' : 'red'">{{ safety.passed ? '门禁通过' : '门禁失败' }}</a-tag>
+            <a-button size="small" :loading="safetyLoading" @click="loadSafety">重新评测</a-button>
+          </a-space>
+        </div>
+        <template v-if="safety">
+          <div class="safety-metrics">
+            <div><strong>{{ safety.total }}</strong><span>固定案例</span></div>
+            <div><strong>{{ fmtPercent(safety.decision_accuracy) }}</strong><span>决策准确率</span></div>
+            <div><strong>{{ fmtPercent(safety.block_recall) }}</strong><span>阻断召回率</span></div>
+            <div :class="{ danger: safety.unsafe_escape_rate > 0 }"><strong>{{ fmtPercent(safety.unsafe_escape_rate) }}</strong><span>不安全误放行率</span></div>
+          </div>
+          <a-alert
+            :type="safety.false_allowed === 0 ? 'success' : 'error'"
+            :message="safety.false_allowed === 0 ? '未发现不安全误放行' : `发现 ${safety.false_allowed} 条不安全误放行`"
+            show-icon
+            style="margin:14px 0"
+          />
+          <a-table :columns="safetyColumns" :data-source="safety.results" row-key="id" size="small" :pagination="{ pageSize: 8 }" :scroll="{ x: 760 }">
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'decision'">
+                <a-tag :color="record.decision_ok ? 'green' : 'red'">{{ record.actual_allowed ? '放行' : '阻断' }}</a-tag>
+              </template>
+            </template>
+          </a-table>
+        </template>
       </section>
       <div class="toolbar">
         <a-segmented v-model:value="filter" :options="[{ label: '全部', value: 'all' }, { label: '待复核', value: 'pending' }, { label: '已纳入', value: 'included' }]" />
@@ -135,5 +187,15 @@ onMounted(load)
 <style scoped>
 .page { height: 100%; width: 100%; overflow-y: auto; }.page-head { min-height: 78px; padding: 18px 26px; background: #fff; border-bottom: 1px solid #edeff2; display: flex; justify-content: space-between; align-items: center; gap: 20px; }.page-head h2 { margin: 0; font-size: 18px; }.page-head p { margin: 4px 0 0; color: #98a2b3; font-size: 13px; }.page-body { padding: 22px 26px; }
 .metrics { display: grid; grid-template-columns: repeat(5, 1fr); background: #fff; border: 1px solid #e8ebef; border-radius: 8px; margin-bottom: 18px; }.metrics > div { min-height: 90px; padding: 17px 20px; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid #edf0f3; }.metrics > div:last-child { border-right: 0; }.metrics :deep(.anticon) { color: #1677ff; font-size: 20px; margin-bottom: 3px; }.metrics strong { color: #1f2733; font-size: 23px; line-height: 1.2; }.metrics span { color: #667085; font-size: 12px; margin-top: 4px; }.toolbar { display: flex; justify-content: space-between; margin-bottom: 12px; }
+.safety-panel { margin-bottom: 20px; padding: 18px 20px; background: #fff; border: 1px solid #e8ebef; border-radius: 8px; }
+.safety-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.safety-head h3 { margin: 0; color: #1f2733; font-size: 15px; }
+.safety-head p { margin: 4px 0 0; color: #98a2b3; font-size: 12px; }
+.safety-metrics { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #edf0f3; border-radius: 6px; }
+.safety-metrics > div { display: flex; flex-direction: column; padding: 13px 16px; border-right: 1px solid #edf0f3; }
+.safety-metrics > div:last-child { border-right: 0; }
+.safety-metrics strong { color: #1f2733; font-size: 20px; }
+.safety-metrics span { margin-top: 3px; color: #667085; font-size: 12px; }
+.safety-metrics .danger strong { color: #cf1322; }
 code { color: #475467; font-size: 12px; overflow-wrap: anywhere; } @media (max-width: 900px) { .metrics { grid-template-columns: repeat(2, 1fr); }.metrics > div { border-bottom: 1px solid #edf0f3; }.page-head { align-items: flex-start; flex-direction: column; }.page-body { padding: 16px; } }
 </style>

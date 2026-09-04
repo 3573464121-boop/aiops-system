@@ -89,7 +89,7 @@ func classify(action, productID string) (kind, minimumRisk string, steps []strin
 			"验证配额、容量上限和回退阈值",
 			"模拟容量调整，不触达生产环境",
 		}
-	case containsAny(normalized, "清理缓存", "刷新缓存", "clear cache", "flush cache"):
+	case (containsAny(normalized, "清理", "刷新") && strings.Contains(normalized, "缓存")) || containsAny(normalized, "clear cache", "flush cache"):
 		return "clear_cache", "high", []string{
 			"确认缓存命名空间和影响范围",
 			"验证缓存预热与回源容量",

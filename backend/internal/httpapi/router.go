@@ -573,6 +573,14 @@ func New(s *app.Service, signer *auth.Signer, knowledgeCount int, storageModes .
 		}
 		c.JSON(http.StatusOK, gin.H{"items": v, "total": len(v)})
 	})
+	api.GET("/safety-evaluation", requireAdmin, func(c *gin.Context) {
+		v, err := s.SafetyEvaluation()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
 	api.GET("/experiment-batches/:id", requireAdmin, func(c *gin.Context) {
 		v, err := s.GetExperimentBatch(c.Param("id"))
 		if err != nil {

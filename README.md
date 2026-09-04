@@ -112,6 +112,8 @@ npm run dev                # 默认 http://localhost:5173
 
 回放平台的独立判官实验见 `backend/eval/replay-report-v1.md`；固定输入数据为 `backend/eval/replay-dataset-v1.json`。
 
+受控处置安全策略使用 30 个固定案例验证白名单动作、风险低报、未审批状态和未知高危动作。运行 `cd backend && go run ./cmd/safetyeval` 可重新生成 `eval/security-policy-report-v1.json` 和 `eval/security-policy-report-v1.md`。当前 v1 报告的决策准确率、动作分类准确率和阻断召回率均为 100%，不安全误放行率为 0%。该结果只覆盖模拟执行器，不代表真实生产执行安全性。
+
 | 配置 | 根因准确率 | 证据召回 | 知识命中 | 忠实度 | 幻觉率 |
 |---|---|---|---|---|---|
 | 智能体 + 向量 RAG | 100% | 100% | 100% | 0.93 | 0% |
@@ -170,6 +172,7 @@ GET  /api/v1/replay-results?case_id=           回放结果（仅管理员）
 POST /api/v1/replay-results/:id/review         人工复核回放结果（仅管理员）
 GET  /api/v1/experiment-batches                实验批次与进度（仅管理员）
 POST /api/v1/experiment-batches                创建并后台运行实验批次（仅管理员）
+GET  /api/v1/safety-evaluation                  运行固定安全策略评测（仅管理员）
 GET  /api/v1/audits
 ```
 
