@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,7 +26,7 @@ func New(s *app.Service, signer *auth.Signer, _ int, storageModes ...string) *gi
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Logger(), gin.Recovery())
-	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173"}, AllowMethods: []string{"GET", "POST", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID"}, MaxAge: 12 * time.Hour}))
+	r.Use(cors.New(cors.Config{AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173"}, AllowMethods: []string{"GET", "POST", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-User-ID", "X-Webhook-Token"}, MaxAge: 12 * time.Hour}))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "time": time.Now(), "knowledge_chunks": s.Tools.KnowledgeSize(), "storage": storageMode})
 	})
@@ -49,6 +50,40 @@ func New(s *app.Service, signer *auth.Signer, _ int, storageModes ...string) *gi
 			return
 		}
 		c.JSON(200, domain.LoginResponse{Token: token, User: u})
+	})
+
+	// Nightingale Webhook is public only at the routing layer. A dedicated secret is mandatory.
+	api.POST("/webhooks/alerts/nightingale", func(c *gin.Context) {
+		expected := strings.TrimSpace(os.Getenv("ALERT_WEBHOOK_TOKEN"))
+		if expected == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "告警 Webhook 未启用"})
+			return
+		}
+		provided := strings.TrimSpace(c.GetHeader("X-Webhook-Token"))
+		if provided == "" {
+			provided = bearerToken(c.GetHeader("Authorization"))
+		}
+		if !secureTokenEqual(provided, expected) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Webhook Token 无效"})
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无法读取 Webhook 载荷"})
+			return
+		}
+		inputs, err := app.ParseNightingaleAlertPayload(body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		result, err := s.IngestAlertEvents(c.Request.Context(), inputs, "nightingale")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	})
 
 	// requireAdmin 用作管理类接口的附加中间件：仅 admin 角色放行。
@@ -139,6 +174,47 @@ func New(s *app.Service, signer *auth.Signer, _ int, storageModes ...string) *gi
 			return
 		}
 		c.JSON(200, gin.H{"items": v, "total": len(v), "mode": s.Tools.AlertProviderName()})
+	})
+	api.GET("/alert-events", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+		items, metrics, err := s.ListAlertEvents(c.Query("status"), c.Query("product_id"), limit)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items), "metrics": metrics, "mode": s.Tools.AlertProviderName()})
+	})
+	api.POST("/alert-events/sync", requireAdmin, func(c *gin.Context) {
+		result, err := s.SyncAlertEvents(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/alert-events/:id/resolve", requireAdmin, func(c *gin.Context) {
+		v, err := s.ResolveAlertEvent(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.POST("/alert-events/:id/reopen", requireAdmin, func(c *gin.Context) {
+		v, err := s.ReopenAlertEvent(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.POST("/alert-events/:id/diagnose", func(c *gin.Context) {
+		event, diagnosis, err := s.DiagnoseAlertEvent(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"event": event, "diagnosis": diagnosis})
 	})
 	api.GET("/logs/search", func(c *gin.Context) {
 		pid := strings.TrimSpace(c.Query("product_id"))
@@ -684,4 +760,16 @@ func mode(key string) string {
 		return "demo"
 	}
 	return "configured"
+}
+
+func bearerToken(header string) string {
+	parts := strings.Fields(strings.TrimSpace(header))
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1]
+	}
+	return ""
+}
+
+func secureTokenEqual(provided, expected string) bool {
+	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }

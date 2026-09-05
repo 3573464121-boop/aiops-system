@@ -12,6 +12,51 @@ type Alert struct {
 	Triggered time.Time `json:"triggered_at"`
 }
 
+type AlertEventInput struct {
+	ExternalID string    `json:"external_id"`
+	ProductID  string    `json:"product_id"`
+	Rule       string    `json:"rule"`
+	Severity   int       `json:"severity"`
+	Target     string    `json:"target"`
+	Value      string    `json:"value"`
+	Status     string    `json:"status"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type AlertEvent struct {
+	ID                  string    `json:"id"`
+	Fingerprint         string    `json:"fingerprint"`
+	ExternalID          string    `json:"external_id"`
+	ProductID           string    `json:"product_id"`
+	Rule                string    `json:"rule"`
+	Severity            int       `json:"severity"`
+	Target              string    `json:"target"`
+	Value               string    `json:"value"`
+	Status              string    `json:"status"` // open | resolved
+	Source              string    `json:"source"`
+	Occurrences         int       `json:"occurrences"`
+	FirstSeenAt         time.Time `json:"first_seen_at"`
+	LastSeenAt          time.Time `json:"last_seen_at"`
+	DiagnosisSummary    string    `json:"diagnosis_summary"`
+	DiagnosisConfidence float64   `json:"diagnosis_confidence"`
+	DiagnosedAt         time.Time `json:"diagnosed_at"`
+}
+
+type AlertEventMetrics struct {
+	RawSignals    int     `json:"raw_signals"`
+	EventCount    int     `json:"event_count"`
+	OpenCount     int     `json:"open_count"`
+	ResolvedCount int     `json:"resolved_count"`
+	ReductionRate float64 `json:"reduction_rate"`
+}
+
+type AlertIngestResult struct {
+	Received int          `json:"received"`
+	Created  int          `json:"created"`
+	Merged   int          `json:"merged"`
+	Items    []AlertEvent `json:"items"`
+}
+
 type Asset struct {
 	ID        string `json:"id"`
 	ProductID string `json:"product_id"`
@@ -39,9 +84,11 @@ type ToolTrace struct {
 }
 
 type DiagnosisRequest struct {
-	ProductID    string `json:"product_id" binding:"required"`
-	Question     string `json:"question" binding:"required"`
-	WindowMinute int    `json:"window_minutes"`
+	ProductID    string     `json:"product_id" binding:"required"`
+	Question     string     `json:"question" binding:"required"`
+	WindowMinute int        `json:"window_minutes"`
+	SeedEvidence []Evidence `json:"-"`
+	SeedAlerts   []Alert    `json:"-"`
 }
 
 type Hypothesis struct {

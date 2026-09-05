@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons-vue'
 import { getUser, clearSession } from './api'
 
-const collapsed = ref(false)
+const collapsed = ref(window.innerWidth <= 680)
 const route = useRoute()
 const router = useRouter()
 

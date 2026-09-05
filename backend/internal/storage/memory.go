@@ -8,23 +8,24 @@ import (
 )
 
 type Memory struct {
-	mu        sync.RWMutex
-	issues    []domain.Issue
-	audits    []domain.AuditEvent
-	tasks     []domain.InspectionTask
-	reports   []domain.InspectionReport
-	memories  []domain.Memory
-	documents []domain.KnowledgeDocument
-	users     []domain.User
-	approvals []domain.Approval
-	runs      []domain.DiagnosisRun
-	cases     []domain.FaultCase
-	replays   []domain.ReplayResult
-	batches   []domain.ExperimentBatch
+	mu          sync.RWMutex
+	issues      []domain.Issue
+	audits      []domain.AuditEvent
+	tasks       []domain.InspectionTask
+	reports     []domain.InspectionReport
+	memories    []domain.Memory
+	documents   []domain.KnowledgeDocument
+	alertEvents []domain.AlertEvent
+	users       []domain.User
+	approvals   []domain.Approval
+	runs        []domain.DiagnosisRun
+	cases       []domain.FaultCase
+	replays     []domain.ReplayResult
+	batches     []domain.ExperimentBatch
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, documents: []domain.KnowledgeDocument{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, documents: []domain.KnowledgeDocument{}, alertEvents: []domain.AlertEvent{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -206,6 +207,76 @@ func (m *Memory) IncrementKnowledgeDocumentHits(ids []string) error {
 		}
 	}
 	return nil
+}
+
+func (m *Memory) UpsertAlertEvent(v domain.AlertEvent) (domain.AlertEvent, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.alertEvents {
+		if m.alertEvents[i].Fingerprint != v.Fingerprint {
+			continue
+		}
+		current := m.alertEvents[i]
+		current.ExternalID = v.ExternalID
+		current.ProductID = v.ProductID
+		current.Rule = v.Rule
+		current.Severity = v.Severity
+		current.Target = v.Target
+		current.Value = v.Value
+		current.Status = v.Status
+		current.Source = v.Source
+		current.Occurrences++
+		current.LastSeenAt = v.LastSeenAt
+		m.alertEvents[i] = current
+		return current, false, nil
+	}
+	m.alertEvents = append([]domain.AlertEvent{v}, m.alertEvents...)
+	return v, true, nil
+}
+
+func (m *Memory) ListAlertEvents(status, productID string, limit int) ([]domain.AlertEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	out := make([]domain.AlertEvent, 0, len(m.alertEvents))
+	for _, v := range m.alertEvents {
+		if status != "" && v.Status != status {
+			continue
+		}
+		if productID != "" && v.ProductID != productID {
+			continue
+		}
+		out = append(out, v)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) GetAlertEvent(id string) (domain.AlertEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, v := range m.alertEvents {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return domain.AlertEvent{}, fmt.Errorf("alert event not found: %s", id)
+}
+
+func (m *Memory) UpdateAlertEvent(v domain.AlertEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.alertEvents {
+		if m.alertEvents[i].ID == v.ID {
+			m.alertEvents[i] = v
+			return nil
+		}
+	}
+	return fmt.Errorf("alert event not found: %s", v.ID)
 }
 
 func (m *Memory) CreateUser(v domain.User) error {

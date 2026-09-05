@@ -8,6 +8,7 @@
 
 - 工具调用循环。模型自主决定调用哪些工具、最多五轮，逐步取证，全过程记录调用轨迹。
 - 流式诊断。通过 SSE 把每一步工具调用与结果实时推送到前端，而不是等待整段结果返回。
+- 告警事件中心。接收 Nightingale Webhook 或同步当前告警 Provider，按来源、产品、规则和目标生成指纹，将重复信号聚合为事件，记录开启、恢复、累计次数和降噪率，并可从事件直接触发诊断。
 - 可管理知识库。Markdown 文档按标题分块，BM25 与向量检索（bge-m3）经 RRF 融合；支持文档导入、启停、版本哈希、索引重建和命中统计，回答附带引用来源。
 - 资产管理（CMDB）。服务器、数据库等资产按产品归档，支持 IP 反查；诊断时作为 `get_assets` / `lookup_ip` 工具供模型取证。
 - 主动巡检。为产品配置定时巡检任务，进程内调度器按周期自动跑诊断并沉淀巡检报告，按风险分级（正常/关注/高风险）标记。
@@ -24,7 +25,7 @@
 - 独立判官。回放支持通过 `JUDGE_BASE_URL`、`JUDGE_API_KEY` 和 `JUDGE_MODEL` 配置独立评审模型，并记录判官来源；未配置时明确标记为自评。
 - 实验质量控制。自动标记判官指标冲突，只有经人工复核采纳的回放结果才能从页面导出为 JSON 或 CSV。
 - 实验批次。可在页面选择多个案例、对照配置和重复次数，后台串行执行并持久化进度、失败数、模型与判官快照。
-- 持久化。工单、审计、巡检、记忆、用户、审批单、诊断实验记录和回放结果均写入 MySQL，不可用时自动回退内存。
+- 持久化。告警事件、工单、审计、巡检、记忆、用户、审批单、诊断实验记录和回放结果均写入 MySQL，不可用时自动回退内存。
 
 ## 架构
 
@@ -100,6 +101,7 @@ npm run dev                # 默认 http://localhost:5173
 | `KNOWLEDGE_PATH` / `KNOWLEDGE_DIR` | 单个内置知识文件和内置 Markdown 目录 |
 | `KNOWLEDGE_MANAGED_DIR` | 网页导入文档的受控存储目录，默认 `knowledge-managed` |
 | `N9E_BASE_URL` / `N9E_TOKEN` | 夜莺告警源，留空用演示数据 |
+| `ALERT_WEBHOOK_TOKEN` | Nightingale Webhook 独立密钥；留空时外部告警写入接口关闭 |
 | `LOG_BASE_URL` / `LOG_TOKEN` | Loki 日志源，留空用演示数据 |
 | `MYSQL_DSN` | 业务数据和诊断实验记录的持久化，留空用内存 |
 | `AUTH_SECRET` | 登录令牌签名密钥，生产环境务必改为随机串；留空用内置开发密钥并告警 |
@@ -129,7 +131,7 @@ npm run dev                # 默认 http://localhost:5173
 
 ## 主要接口
 
-除 `/healthz` 与 `/api/v1/auth/login` 外，所有 `/api/v1` 接口都需在请求头带 `Authorization: Bearer <token>`；标注「仅管理员」的还要求管理员角色。
+除 `/healthz`、`/api/v1/auth/login` 与 Nightingale Webhook 外，所有 `/api/v1` 接口都需在请求头带 `Authorization: Bearer <token>`；标注「仅管理员」的还要求管理员角色。Webhook 不使用登录令牌，必须配置并提供独立的 `ALERT_WEBHOOK_TOKEN`。
 
 ```
 GET  /healthz
@@ -139,6 +141,12 @@ GET  /api/v1/system/status
 GET  /api/v1/data-sources                         数据源状态
 POST /api/v1/data-sources/:name/test              连接检测（仅管理员）
 GET  /api/v1/alerts/active?product_id=payment
+POST /api/v1/webhooks/alerts/nightingale            接收夜莺告警（独立 Webhook Token）
+GET  /api/v1/alert-events?status=open&product_id=payment
+POST /api/v1/alert-events/sync                      同步当前告警 Provider（仅管理员）
+POST /api/v1/alert-events/:id/resolve               人工标记恢复（仅管理员）
+POST /api/v1/alert-events/:id/reopen                撤销误恢复并重新打开（仅管理员）
+POST /api/v1/alert-events/:id/diagnose              从事件触发诊断
 GET  /api/v1/logs/search?product_id=payment&query=timeout
 GET  /api/v1/knowledge/search?query=告警检索
 GET  /api/v1/knowledge/status                    知识索引状态与版本
@@ -187,7 +195,7 @@ GET  /api/v1/audits
 
 ## 现状与后续
 
-已实现：工具调用循环、流式诊断、多页控制台、夜莺/Loki 适配器、数据源检测、可管理且版本化的向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入、对照回放与实验批次、资产管理（CMDB）、主动巡检、四级作用域记忆、用户与团队权限、操作人审计、高风险处置审批、策略校验与模拟执行闭环。
+已实现：工具调用循环、流式诊断、告警事件聚合与降噪指标、多页控制台、夜莺/Loki 适配器、数据源检测、可管理且版本化的向量 RAG、评测程序、诊断实验留档与人工标注、故障案例导入、对照回放与实验批次、资产管理（CMDB）、主动巡检、四级作用域记忆、用户与团队权限、操作人审计、高风险处置审批、策略校验与模拟执行闭环。
 
 计划中：
 

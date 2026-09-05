@@ -109,6 +109,26 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			updated_at DATETIME NOT NULL,
 			INDEX idx_knowledge_enabled_updated (enabled, updated_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS alert_events (
+			id VARCHAR(64) PRIMARY KEY,
+			fingerprint CHAR(64) NOT NULL UNIQUE,
+			external_id VARCHAR(128) NOT NULL DEFAULT '',
+			product_id VARCHAR(128) NOT NULL,
+			rule_name VARCHAR(255) NOT NULL,
+			severity INT NOT NULL,
+			target_name VARCHAR(255) NOT NULL,
+			trigger_value VARCHAR(512) NOT NULL DEFAULT '',
+			status VARCHAR(16) NOT NULL,
+			source VARCHAR(64) NOT NULL,
+			occurrences INT NOT NULL DEFAULT 1,
+			first_seen_at DATETIME NOT NULL,
+			last_seen_at DATETIME NOT NULL,
+			diagnosis_summary TEXT NOT NULL,
+			diagnosis_confidence DOUBLE NOT NULL DEFAULT 0,
+			diagnosed_at DATETIME NULL,
+			INDEX idx_alert_events_status_last (status, last_seen_at),
+			INDEX idx_alert_events_product_last (product_id, last_seen_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id VARCHAR(64) PRIMARY KEY,
 			username VARCHAR(64) NOT NULL UNIQUE,
@@ -503,6 +523,73 @@ func (m *MySQL) IncrementKnowledgeDocumentHits(ids []string) error {
 		args[i] = id
 	}
 	_, err := m.db.Exec(`UPDATE knowledge_documents SET hit_count = hit_count + 1 WHERE id IN (`+placeholders+`)`, args...)
+	return err
+}
+
+const alertEventColumns = `id, fingerprint, external_id, product_id, rule_name, severity, target_name, trigger_value, status, source, occurrences, first_seen_at, last_seen_at, diagnosis_summary, diagnosis_confidence, diagnosed_at`
+
+func scanAlertEvent(scanner knowledgeDocumentScanner) (domain.AlertEvent, error) {
+	var v domain.AlertEvent
+	var diagnosed sql.NullTime
+	err := scanner.Scan(&v.ID, &v.Fingerprint, &v.ExternalID, &v.ProductID, &v.Rule, &v.Severity, &v.Target, &v.Value, &v.Status, &v.Source, &v.Occurrences, &v.FirstSeenAt, &v.LastSeenAt, &v.DiagnosisSummary, &v.DiagnosisConfidence, &diagnosed)
+	if diagnosed.Valid {
+		v.DiagnosedAt = diagnosed.Time
+	}
+	return v, err
+}
+
+func (m *MySQL) UpsertAlertEvent(v domain.AlertEvent) (domain.AlertEvent, bool, error) {
+	result, err := m.db.Exec(`INSERT INTO alert_events (id, fingerprint, external_id, product_id, rule_name, severity, target_name, trigger_value, status, source, occurrences, first_seen_at, last_seen_at, diagnosis_summary, diagnosis_confidence, diagnosed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE external_id=VALUES(external_id), product_id=VALUES(product_id), rule_name=VALUES(rule_name), severity=VALUES(severity), target_name=VALUES(target_name), trigger_value=VALUES(trigger_value), status=VALUES(status), source=VALUES(source), occurrences=occurrences+1, last_seen_at=VALUES(last_seen_at)`,
+		v.ID, v.Fingerprint, v.ExternalID, v.ProductID, v.Rule, v.Severity, v.Target, v.Value, v.Status, v.Source, v.Occurrences, v.FirstSeenAt, v.LastSeenAt, v.DiagnosisSummary, v.DiagnosisConfidence, nullTime(v.DiagnosedAt))
+	if err != nil {
+		return domain.AlertEvent{}, false, err
+	}
+	affected, _ := result.RowsAffected()
+	stored, err := scanAlertEvent(m.db.QueryRow(`SELECT `+alertEventColumns+` FROM alert_events WHERE fingerprint = ?`, v.Fingerprint))
+	return stored, affected == 1, err
+}
+
+func (m *MySQL) ListAlertEvents(status, productID string, limit int) ([]domain.AlertEvent, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	query := `SELECT ` + alertEventColumns + ` FROM alert_events WHERE 1=1`
+	args := make([]any, 0, 3)
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	if productID != "" {
+		query += ` AND product_id = ?`
+		args = append(args, productID)
+	}
+	query += ` ORDER BY last_seen_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.AlertEvent, 0)
+	for rows.Next() {
+		v, scanErr := scanAlertEvent(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (m *MySQL) GetAlertEvent(id string) (domain.AlertEvent, error) {
+	return scanAlertEvent(m.db.QueryRow(`SELECT `+alertEventColumns+` FROM alert_events WHERE id = ?`, id))
+}
+
+func (m *MySQL) UpdateAlertEvent(v domain.AlertEvent) error {
+	_, err := m.db.Exec(`UPDATE alert_events SET external_id=?, product_id=?, rule_name=?, severity=?, target_name=?, trigger_value=?, status=?, source=?, occurrences=?, first_seen_at=?, last_seen_at=?, diagnosis_summary=?, diagnosis_confidence=?, diagnosed_at=? WHERE id=?`,
+		v.ExternalID, v.ProductID, v.Rule, v.Severity, v.Target, v.Value, v.Status, v.Source, v.Occurrences, v.FirstSeenAt, v.LastSeenAt, v.DiagnosisSummary, v.DiagnosisConfidence, nullTime(v.DiagnosedAt), v.ID)
 	return err
 }
 

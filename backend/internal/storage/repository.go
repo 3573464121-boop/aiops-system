@@ -28,6 +28,11 @@ type Repository interface {
 	DeleteKnowledgeDocument(id string) error
 	IncrementKnowledgeDocumentHits(ids []string) error
 
+	UpsertAlertEvent(domain.AlertEvent) (domain.AlertEvent, bool, error)
+	ListAlertEvents(status, productID string, limit int) ([]domain.AlertEvent, error)
+	GetAlertEvent(id string) (domain.AlertEvent, error)
+	UpdateAlertEvent(domain.AlertEvent) error
+
 	CreateUser(domain.User) error
 	GetUserByUsername(username string) (domain.User, error)
 	ListUsers() ([]domain.User, error)

@@ -139,3 +139,34 @@ func TestFaultCaseRoutesRequireAdmin(t *testing.T) {
 		t.Fatalf("admin create: want 201 got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestNightingaleWebhookRequiresDedicatedToken(t *testing.T) {
+	signer := auth.NewSigner("test-secret", time.Hour)
+	r := New(app.New(&tools.Service{}, nil), signer, 0)
+	body := `{"rule_name":"High error rate","target_ident":"payment-api-01","group_name":"payment","severity":1}`
+
+	t.Setenv("ALERT_WEBHOOK_TOKEN", "")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/alerts/nightingale", strings.NewReader(body))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled webhook: want 503 got %d", w.Code)
+	}
+
+	t.Setenv("ALERT_WEBHOOK_TOKEN", "webhook-secret")
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/alerts/nightingale", strings.NewReader(body))
+	req.Header.Set("X-Webhook-Token", "wrong")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: want 401 got %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/alerts/nightingale", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer webhook-secret")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"created":1`) {
+		t.Fatalf("valid webhook failed: %d %s", w.Code, w.Body.String())
+	}
+}
