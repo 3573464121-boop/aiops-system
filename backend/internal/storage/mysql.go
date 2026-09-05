@@ -129,6 +129,15 @@ func (m *MySQL) migrate(ctx context.Context) error {
 			INDEX idx_alert_events_status_last (status, last_seen_at),
 			INDEX idx_alert_events_product_last (product_id, last_seen_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS alert_correlation_labels (
+			event_id VARCHAR(64) PRIMARY KEY,
+			product_id VARCHAR(128) NOT NULL,
+			fault_key VARCHAR(128) NOT NULL,
+			note VARCHAR(512) NOT NULL DEFAULT '',
+			labeled_by VARCHAR(64) NOT NULL DEFAULT '',
+			updated_at DATETIME NOT NULL,
+			INDEX idx_alert_labels_product_updated (product_id, updated_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id VARCHAR(64) PRIMARY KEY,
 			username VARCHAR(64) NOT NULL UNIQUE,
@@ -591,6 +600,53 @@ func (m *MySQL) UpdateAlertEvent(v domain.AlertEvent) error {
 	_, err := m.db.Exec(`UPDATE alert_events SET external_id=?, product_id=?, rule_name=?, severity=?, target_name=?, trigger_value=?, status=?, source=?, occurrences=?, first_seen_at=?, last_seen_at=?, diagnosis_summary=?, diagnosis_confidence=?, diagnosed_at=? WHERE id=?`,
 		v.ExternalID, v.ProductID, v.Rule, v.Severity, v.Target, v.Value, v.Status, v.Source, v.Occurrences, v.FirstSeenAt, v.LastSeenAt, v.DiagnosisSummary, v.DiagnosisConfidence, nullTime(v.DiagnosedAt), v.ID)
 	return err
+}
+
+func (m *MySQL) SaveAlertCorrelationLabels(upserts []domain.AlertCorrelationLabel, deleteEventIDs []string) error {
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range deleteEventIDs {
+		if _, err = tx.Exec(`DELETE FROM alert_correlation_labels WHERE event_id = ?`, id); err != nil {
+			return err
+		}
+	}
+	for _, v := range upserts {
+		_, err = tx.Exec(`INSERT INTO alert_correlation_labels (event_id, product_id, fault_key, note, labeled_by, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE product_id=VALUES(product_id), fault_key=VALUES(fault_key), note=VALUES(note), labeled_by=VALUES(labeled_by), updated_at=VALUES(updated_at)`,
+			v.EventID, v.ProductID, v.FaultKey, v.Note, v.LabeledBy, v.UpdatedAt)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (m *MySQL) ListAlertCorrelationLabels(productID string) ([]domain.AlertCorrelationLabel, error) {
+	query := `SELECT event_id, product_id, fault_key, note, labeled_by, updated_at FROM alert_correlation_labels`
+	args := make([]any, 0, 1)
+	if productID != "" {
+		query += ` WHERE product_id = ?`
+		args = append(args, productID)
+	}
+	query += ` ORDER BY updated_at DESC`
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.AlertCorrelationLabel, 0)
+	for rows.Next() {
+		var v domain.AlertCorrelationLabel
+		if err = rows.Scan(&v.EventID, &v.ProductID, &v.FaultKey, &v.Note, &v.LabeledBy, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 func (m *MySQL) CreateUser(v domain.User) error {

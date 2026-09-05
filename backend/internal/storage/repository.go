@@ -32,6 +32,8 @@ type Repository interface {
 	ListAlertEvents(status, productID string, limit int) ([]domain.AlertEvent, error)
 	GetAlertEvent(id string) (domain.AlertEvent, error)
 	UpdateAlertEvent(domain.AlertEvent) error
+	SaveAlertCorrelationLabels(upserts []domain.AlertCorrelationLabel, deleteEventIDs []string) error
+	ListAlertCorrelationLabels(productID string) ([]domain.AlertCorrelationLabel, error)
 
 	CreateUser(domain.User) error
 	GetUserByUsername(username string) (domain.User, error)

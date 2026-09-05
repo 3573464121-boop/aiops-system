@@ -232,6 +232,27 @@ func New(s *app.Service, signer *auth.Signer, _ int, storageModes ...string) *gi
 		}
 		c.JSON(http.StatusOK, gin.H{"incident": incident, "diagnosis": diagnosis})
 	})
+	api.GET("/alert-correlation/evaluation", func(c *gin.Context) {
+		metrics, labels, err := s.EvaluateAlertCorrelation(c.Query("product_id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"metrics": metrics, "labels": labels})
+	})
+	api.PUT("/alert-correlation/labels", requireAdmin, func(c *gin.Context) {
+		var req domain.AlertCorrelationLabelRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		labels, err := s.SaveAlertCorrelationLabels(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": labels, "total": len(labels)})
+	})
 	api.GET("/logs/search", func(c *gin.Context) {
 		pid := strings.TrimSpace(c.Query("product_id"))
 		if pid == "" {

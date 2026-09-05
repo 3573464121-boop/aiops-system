@@ -21,6 +21,7 @@ const actionText = a => ({
   execute_approval: '确认处置执行',
   cancel_approval: '撤销审批申请',
   review_diagnosis_run: '复核诊断实验记录',
+  label_alert_correlation: '标注告警关联结果',
 }[a] || a)
 
 const roleText = r => ({

@@ -16,6 +16,7 @@ type Memory struct {
 	memories    []domain.Memory
 	documents   []domain.KnowledgeDocument
 	alertEvents []domain.AlertEvent
+	alertLabels []domain.AlertCorrelationLabel
 	users       []domain.User
 	approvals   []domain.Approval
 	runs        []domain.DiagnosisRun
@@ -25,7 +26,7 @@ type Memory struct {
 }
 
 func NewMemory() *Memory {
-	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, documents: []domain.KnowledgeDocument{}, alertEvents: []domain.AlertEvent{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
+	return &Memory{issues: []domain.Issue{}, audits: []domain.AuditEvent{}, tasks: []domain.InspectionTask{}, reports: []domain.InspectionReport{}, memories: []domain.Memory{}, documents: []domain.KnowledgeDocument{}, alertEvents: []domain.AlertEvent{}, alertLabels: []domain.AlertCorrelationLabel{}, users: []domain.User{}, approvals: []domain.Approval{}, runs: []domain.DiagnosisRun{}, cases: []domain.FaultCase{}, replays: []domain.ReplayResult{}, batches: []domain.ExperimentBatch{}}
 }
 func (m *Memory) CreateIssue(v domain.Issue) error {
 	m.mu.Lock()
@@ -277,6 +278,48 @@ func (m *Memory) UpdateAlertEvent(v domain.AlertEvent) error {
 		}
 	}
 	return fmt.Errorf("alert event not found: %s", v.ID)
+}
+
+func (m *Memory) SaveAlertCorrelationLabels(upserts []domain.AlertCorrelationLabel, deleteEventIDs []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := make(map[string]bool, len(deleteEventIDs))
+	for _, id := range deleteEventIDs {
+		deleted[id] = true
+	}
+	kept := m.alertLabels[:0]
+	for _, label := range m.alertLabels {
+		if !deleted[label.EventID] {
+			kept = append(kept, label)
+		}
+	}
+	m.alertLabels = kept
+	for _, incoming := range upserts {
+		updated := false
+		for i := range m.alertLabels {
+			if m.alertLabels[i].EventID == incoming.EventID {
+				m.alertLabels[i] = incoming
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			m.alertLabels = append(m.alertLabels, incoming)
+		}
+	}
+	return nil
+}
+
+func (m *Memory) ListAlertCorrelationLabels(productID string) ([]domain.AlertCorrelationLabel, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]domain.AlertCorrelationLabel, 0, len(m.alertLabels))
+	for _, label := range m.alertLabels {
+		if productID == "" || label.ProductID == productID {
+			out = append(out, label)
+		}
+	}
+	return out, nil
 }
 
 func (m *Memory) CreateUser(v domain.User) error {

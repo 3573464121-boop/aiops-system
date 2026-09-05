@@ -1,7 +1,7 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { ApartmentOutlined, CheckCircleOutlined, ReloadOutlined, RobotOutlined, RollbackOutlined, SyncOutlined } from '@ant-design/icons-vue'
+import { ApartmentOutlined, CheckCircleOutlined, DownloadOutlined, ExperimentOutlined, FormOutlined, ReloadOutlined, RobotOutlined, RollbackOutlined, SyncOutlined } from '@ant-design/icons-vue'
 import { api, isAdmin, sevColor, sevText } from '../api'
 
 const product = ref('')
@@ -17,6 +17,13 @@ const selectedEvent = ref(null)
 const viewMode = ref('events')
 const incidents = ref([])
 const correlation = ref({ open_event_count: 0, incident_count: 0, correlated_event_count: 0, singleton_count: 0, pair_comparisons: 0, linked_pairs: 0, compression_rate: 0, algorithm_version: '', window_minutes: 0, threshold: 0 })
+const evaluation = ref({ eligible_event_count: 0, labeled_event_count: 0, coverage: 0, evaluated_pair_count: 0, true_positive: 0, false_positive: 0, false_negative: 0, true_negative: 0, pair_precision: 0, pair_recall: 0, pair_f1: 0, pair_accuracy: 0, false_link_rate: 0, missed_link_rate: 0 })
+const labels = ref([])
+const labelOpen = ref(false)
+const labelSaving = ref(false)
+const labelTarget = ref(null)
+const labelRows = ref([])
+const bulkFaultKey = ref('')
 const admin = isAdmin()
 const compact = ref(window.innerWidth <= 720)
 const updateCompact = () => { compact.value = window.innerWidth <= 720 }
@@ -48,8 +55,12 @@ const incidentColumns = [
   { title: '产品 / 目标', key: 'scope', width: 220 },
   { title: '关联依据', key: 'reasons', width: 310 },
   { title: '时间范围', key: 'time', width: 180 },
-  { title: '操作', key: 'ops', width: 110, fixed: 'right' },
+  { title: '操作', key: 'ops', width: 190, fixed: 'right' },
 ]
+
+const labelIndex = computed(() => Object.fromEntries(labels.value.map(v => [v.event_id, v])))
+const precisionReady = computed(() => evaluation.value.true_positive + evaluation.value.false_positive > 0)
+const recallReady = computed(() => evaluation.value.true_positive + evaluation.value.false_negative > 0)
 
 const formatTime = value => {
   if (!value || value.startsWith?.('0001')) return '-'
@@ -68,14 +79,17 @@ async function load() {
     if (status.value) query.set('status', status.value)
     const incidentQuery = new URLSearchParams()
     if (product.value.trim()) incidentQuery.set('product_id', product.value.trim())
-    const [data, correlated] = await Promise.all([
+    const [data, correlated, assessed] = await Promise.all([
       api(`/alert-events?${query}`),
       api(`/alert-incidents?${incidentQuery}`),
+      api(`/alert-correlation/evaluation?${incidentQuery}`),
     ])
     rows.value = data.items || []
     metrics.value = data.metrics || metrics.value
     incidents.value = correlated.items || []
     correlation.value = correlated.metrics || correlation.value
+    labels.value = assessed.labels || []
+    evaluation.value = assessed.metrics || evaluation.value
   } catch (e) {
     message.error(e.message)
   } finally {
@@ -129,6 +143,87 @@ async function diagnoseIncident(record) {
   } finally {
     diagnosingID.value = ''
   }
+}
+
+function labeledCount(record) {
+  return record.events.filter(event => labelIndex.value[event.id]).length
+}
+
+function openLabels(record) {
+  labelTarget.value = record
+  bulkFaultKey.value = ''
+  labelRows.value = record.events.map(event => {
+    const saved = labelIndex.value[event.id] || {}
+    return {
+      event_id: event.id,
+      rule: event.rule,
+      target: event.target,
+      fault_key: saved.fault_key || '',
+      note: saved.note || '',
+    }
+  })
+  labelOpen.value = true
+}
+
+function applyBulkFaultKey() {
+  const key = bulkFaultKey.value.trim()
+  if (!key) {
+    message.warning('请先填写故障组')
+    return
+  }
+  labelRows.value.forEach(row => { row.fault_key = key })
+}
+
+async function saveLabels() {
+  labelSaving.value = true
+  try {
+    await api('/alert-correlation/labels', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: labelRows.value.map(({ event_id, fault_key, note }) => ({ event_id, fault_key, note })) }),
+    })
+    labelOpen.value = false
+    message.success('人工关联标注已保存')
+    await load()
+  } catch (e) {
+    message.error(e.message)
+  } finally {
+    labelSaving.value = false
+  }
+}
+
+function exportCorrelationEvaluation() {
+  if (!evaluation.value.evaluated_pair_count) {
+    message.warning('至少标注两个同产品事件后才能导出评测')
+    return
+  }
+  const eventIndex = {}
+  const predictedIndex = {}
+  incidents.value.forEach(incident => incident.events.forEach(event => {
+    eventIndex[event.id] = event
+    predictedIndex[event.id] = incident.id
+  }))
+  const payload = {
+    exported_at: new Date().toISOString(),
+    algorithm: {
+      version: correlation.value.algorithm_version,
+      window_minutes: correlation.value.window_minutes,
+      threshold: correlation.value.threshold,
+    },
+    product_id: product.value.trim(),
+    metrics: evaluation.value,
+    items: labels.value.map(label => ({
+      ...label,
+      predicted_incident_id: predictedIndex[label.event_id] || '',
+      event: eventIndex[label.event_id] || null,
+    })),
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `alert-correlation-evaluation-${new Date().toISOString().slice(0, 10)}.json`
+  link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 async function resolveEvent(record) {
@@ -195,7 +290,18 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
           <a-segmented v-if="viewMode === 'events'" v-model:value="status" :options="statusOptions" @change="load" />
           <a-input v-model:value="product" allow-clear placeholder="按产品标识筛选" class="product-filter" @pressEnter="load" @change="!product && load()" />
           <a-button @click="load">查询</a-button>
+          <a-button v-if="viewMode === 'incidents'" :disabled="!evaluation.evaluated_pair_count" @click="exportCorrelationEvaluation"><DownloadOutlined />导出评测</a-button>
           <span class="result-count">当前显示 {{ viewMode === 'events' ? `${rows.length} 个事件` : `${incidents.length} 个故障簇` }}</span>
+        </div>
+
+        <div v-if="viewMode === 'incidents'" class="evaluation-bar">
+          <div class="evaluation-title"><ExperimentOutlined /><div><strong>人工关联评测</strong><span>{{ correlation.algorithm_version }} · 事件对比较</span></div></div>
+          <div class="evaluation-stat"><strong>{{ evaluation.labeled_event_count }}/{{ evaluation.eligible_event_count }}</strong><span>标注覆盖</span></div>
+          <div class="evaluation-stat"><strong>{{ evaluation.evaluated_pair_count }}</strong><span>评测事件对</span></div>
+          <div class="evaluation-stat"><strong>{{ precisionReady ? percent(evaluation.pair_precision) : '-' }}</strong><span>关联精确率</span></div>
+          <div class="evaluation-stat"><strong>{{ recallReady ? percent(evaluation.pair_recall) : '-' }}</strong><span>关联召回率</span></div>
+          <div class="evaluation-stat critical"><strong>{{ precisionReady ? percent(evaluation.false_link_rate) : '-' }}</strong><span>误关联率</span></div>
+          <div class="evaluation-stat critical"><strong>{{ recallReady ? percent(evaluation.missed_link_rate) : '-' }}</strong><span>漏关联率</span></div>
         </div>
 
         <a-table
@@ -284,11 +390,11 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'severity'"><a-tag :color="sevColor(record.severity)">{{ sevText(record.severity) }}</a-tag></template>
             <template v-else-if="column.key === 'incident'"><strong class="rule-name">{{ record.title }}</strong><span class="source">{{ record.id }}</span></template>
-            <template v-else-if="column.key === 'scale'"><strong class="scale-number">{{ record.event_count }}</strong> 事件<span class="source">{{ record.signal_count }} 条原始信号</span></template>
+            <template v-else-if="column.key === 'scale'"><strong class="scale-number">{{ record.event_count }}</strong> 事件<span class="source">{{ record.signal_count }} 条原始信号</span><span class="source">{{ labeledCount(record) }}/{{ record.event_count }} 已标注</span></template>
             <template v-else-if="column.key === 'scope'"><a-tag>{{ record.product_id }}</a-tag><div class="tag-line"><a-tag v-for="target in record.targets" :key="target" color="blue">{{ target }}</a-tag></div></template>
             <template v-else-if="column.key === 'reasons'"><span v-for="reason in record.reasons" :key="reason" class="reason">{{ reason }}</span></template>
             <template v-else-if="column.key === 'time'"><span class="time">{{ formatTime(record.first_seen_at) }}</span><span class="time muted">{{ formatTime(record.last_seen_at) }}</span></template>
-            <template v-else-if="column.key === 'ops'"><a-button type="link" size="small" :loading="diagnosingID === record.id" @click="diagnoseIncident(record)"><RobotOutlined />整簇诊断</a-button></template>
+            <template v-else-if="column.key === 'ops'"><a-button type="link" size="small" :loading="diagnosingID === record.id" @click="diagnoseIncident(record)"><RobotOutlined />整簇诊断</a-button><a-button v-if="admin" type="link" size="small" @click="openLabels(record)"><FormOutlined />标注</a-button></template>
           </template>
           <template #emptyText><div class="empty-state">暂无开放事件可供关联</div></template>
         </a-table>
@@ -299,8 +405,9 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
             <strong class="rule-name">{{ record.title }}</strong>
             <div class="tag-line"><a-tag v-for="target in record.targets" :key="target">{{ target }}</a-tag></div>
             <div class="reason-list"><span v-for="reason in record.reasons" :key="reason" class="reason">{{ reason }}</span></div>
+            <span class="mobile-label-status">人工标注 {{ labeledCount(record) }}/{{ record.event_count }}</span>
             <dl><div><dt>首次出现</dt><dd>{{ formatTime(record.first_seen_at) }}</dd></div><div><dt>最近出现</dt><dd>{{ formatTime(record.last_seen_at) }}</dd></div></dl>
-            <div class="mobile-actions"><a-button type="link" size="small" :loading="diagnosingID === record.id" @click="diagnoseIncident(record)"><RobotOutlined />整簇诊断</a-button></div>
+            <div class="mobile-actions"><a-button type="link" size="small" :loading="diagnosingID === record.id" @click="diagnoseIncident(record)"><RobotOutlined />整簇诊断</a-button><a-button v-if="admin" type="link" size="small" @click="openLabels(record)"><FormOutlined />标注</a-button></div>
           </article>
           <div v-if="!incidents.length && !loading" class="empty-state">暂无开放事件可供关联</div>
         </div>
@@ -320,6 +427,20 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
         <section><h3>证据链</h3><div v-for="item in diagnosis.evidence" :key="item.source" class="evidence"><strong>{{ item.title }}</strong><p>{{ item.content }}</p><small>{{ item.source }}</small></div></section>
       </div>
     </a-drawer>
+
+    <a-modal v-model:open="labelOpen" title="人工关联标注" width="min(820px, 94vw)" :confirm-loading="labelSaving" ok-text="保存标注" cancel-text="取消" @ok="saveLabels">
+      <div class="label-batch">
+        <a-input v-model:value="bulkFaultKey" maxlength="128" placeholder="统一故障组，例如 INC-PAY-001" @pressEnter="applyBulkFaultKey" />
+        <a-button @click="applyBulkFaultKey">应用到本簇</a-button>
+      </div>
+      <div class="label-list">
+        <div v-for="row in labelRows" :key="row.event_id" class="label-row">
+          <div class="label-event"><strong>{{ row.rule }}</strong><span>{{ row.target }} · {{ row.event_id }}</span></div>
+          <a-input v-model:value="row.fault_key" maxlength="128" allow-clear placeholder="真实故障组（留空则清除）" />
+          <a-input v-model:value="row.note" maxlength="512" allow-clear placeholder="复核说明（可选）" />
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -360,6 +481,16 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
 .toolbar-separator { width: 1px; height: 24px; background: #e1e5ea; }
 .product-filter { width: 220px; }
 .result-count { margin-left: auto; color: #758196; font-size: 12px; line-height: 1.5; }
+.evaluation-bar { display: grid; grid-template-columns: minmax(210px, 1.5fr) repeat(6, minmax(94px, 1fr)); min-height: 76px; background: #f8fafc; border-bottom: 1px solid #e6ebf1; }
+.evaluation-title { display: flex; align-items: center; gap: 10px; padding: 13px 16px; }
+.evaluation-title > :deep(.anticon) { color: #227ca7; font-size: 18px; }
+.evaluation-title div { display: flex; flex-direction: column; }
+.evaluation-title strong { color: #24354b; font-size: 14px; line-height: 1.5; }
+.evaluation-title span { margin-top: 2px; color: #7d8999; font-size: 11px; line-height: 1.5; }
+.evaluation-stat { display: flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; border-left: 1px solid #e5eaf0; }
+.evaluation-stat strong { color: #285f80; font-size: 17px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.evaluation-stat span { margin-top: 3px; color: #758397; font-size: 11px; line-height: 1.45; white-space: nowrap; }
+.evaluation-stat.critical strong { color: #a34e3f; }
 .rule-name, .source, .target-name, .time { display: block; }
 .rule-name { color: #203047; font-size: 14px; line-height: 1.55; }
 .source { margin-top: 4px; color: #8490a2; font-size: 12px; line-height: 1.5; }
@@ -390,7 +521,15 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
 .mobile-event .diagnosis-summary { margin-top: 10px; }
 .incident-size { margin-left: auto; color: #718094; font-size: 10px; }
 .reason-list { margin-top: 9px; }
+.mobile-label-status { display: block; margin-top: 9px; color: #69788c; font-size: 12px; line-height: 1.5; }
 .mobile-actions { display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 7px; border-top: 1px solid #edf0f4; }
+.label-batch { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; margin-bottom: 16px; }
+.label-list { border-top: 1px solid #e6ebf0; }
+.label-row { display: grid; grid-template-columns: minmax(180px, 1.3fr) minmax(180px, 1fr) minmax(180px, 1fr); gap: 10px; align-items: center; padding: 12px 0; border-bottom: 1px solid #edf0f4; }
+.label-event { min-width: 0; }
+.label-event strong, .label-event span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label-event strong { color: #26364b; font-size: 13px; line-height: 1.5; }
+.label-event span { margin-top: 3px; color: #8490a1; font-size: 11px; line-height: 1.5; }
 .drawer-context { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 1px solid #edf0f4; }
 .drawer-context span { color: #788496; font-size: 12px; }
 .diagnosis-detail section { padding: 18px 0; border-bottom: 1px solid #edf0f4; }
@@ -412,6 +551,9 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
   .correlation-title { flex: 1 1 50%; min-height: 70px; }
   .flow { flex: 1 1 42%; min-height: 70px; border-right: 0; }
   .correlation-stat { flex: 1 1 33.33%; min-height: 58px; border-top: 1px solid #edf0f3; }
+  .evaluation-bar { grid-template-columns: repeat(3, 1fr); }
+  .evaluation-title { grid-column: 1 / -1; min-height: 62px; border-bottom: 1px solid #e5eaf0; }
+  .evaluation-stat { min-height: 58px; }
 }
 @media (max-width: 680px) {
   .page-head { align-items: flex-start; padding: 16px; flex-direction: column; }
@@ -430,5 +572,10 @@ onUnmounted(() => window.removeEventListener('resize', updateCompact))
   .toolbar-separator { display: none; }
   .product-filter { width: 100%; }
   .result-count { width: 100%; margin-left: 0; }
+  .evaluation-bar { grid-template-columns: repeat(2, 1fr); }
+  .evaluation-title { grid-column: 1 / -1; }
+  .evaluation-stat { min-height: 60px; border-top: 1px solid #e5eaf0; }
+  .label-batch, .label-row { grid-template-columns: 1fr; }
+  .label-row { gap: 8px; padding: 14px 0; }
 }
 </style>

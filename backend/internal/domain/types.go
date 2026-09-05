@@ -85,6 +85,42 @@ type AlertCorrelationMetrics struct {
 	Threshold            float64 `json:"threshold"`
 }
 
+type AlertCorrelationLabel struct {
+	EventID   string    `json:"event_id"`
+	ProductID string    `json:"product_id"`
+	FaultKey  string    `json:"fault_key"`
+	Note      string    `json:"note"`
+	LabeledBy string    `json:"labeled_by"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AlertCorrelationLabelInput struct {
+	EventID  string `json:"event_id"`
+	FaultKey string `json:"fault_key"`
+	Note     string `json:"note"`
+}
+
+type AlertCorrelationLabelRequest struct {
+	Items []AlertCorrelationLabelInput `json:"items" binding:"required"`
+}
+
+type AlertCorrelationEvaluation struct {
+	EligibleEventCount int     `json:"eligible_event_count"`
+	LabeledEventCount  int     `json:"labeled_event_count"`
+	Coverage           float64 `json:"coverage"`
+	EvaluatedPairCount int     `json:"evaluated_pair_count"`
+	TruePositive       int     `json:"true_positive"`
+	FalsePositive      int     `json:"false_positive"`
+	FalseNegative      int     `json:"false_negative"`
+	TrueNegative       int     `json:"true_negative"`
+	PairPrecision      float64 `json:"pair_precision"`
+	PairRecall         float64 `json:"pair_recall"`
+	PairF1             float64 `json:"pair_f1"`
+	PairAccuracy       float64 `json:"pair_accuracy"`
+	FalseLinkRate      float64 `json:"false_link_rate"`
+	MissedLinkRate     float64 `json:"missed_link_rate"`
+}
+
 type Asset struct {
 	ID        string `json:"id"`
 	ProductID string `json:"product_id"`
