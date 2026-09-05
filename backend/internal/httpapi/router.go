@@ -216,6 +216,22 @@ func New(s *app.Service, signer *auth.Signer, _ int, storageModes ...string) *gi
 		}
 		c.JSON(http.StatusOK, gin.H{"event": event, "diagnosis": diagnosis})
 	})
+	api.GET("/alert-incidents", func(c *gin.Context) {
+		items, metrics, err := s.CorrelateAlertEvents(c.Query("product_id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items), "metrics": metrics})
+	})
+	api.POST("/alert-incidents/:id/diagnose", func(c *gin.Context) {
+		incident, diagnosis, err := s.DiagnoseAlertIncident(c.Request.Context(), c.Param("id"), c.Query("product_id"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"incident": incident, "diagnosis": diagnosis})
+	})
 	api.GET("/logs/search", func(c *gin.Context) {
 		pid := strings.TrimSpace(c.Query("product_id"))
 		if pid == "" {

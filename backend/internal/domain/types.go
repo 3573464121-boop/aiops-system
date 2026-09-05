@@ -57,6 +57,34 @@ type AlertIngestResult struct {
 	Items    []AlertEvent `json:"items"`
 }
 
+type AlertIncident struct {
+	ID          string       `json:"id"`
+	ProductID   string       `json:"product_id"`
+	Title       string       `json:"title"`
+	Severity    int          `json:"severity"`
+	EventCount  int          `json:"event_count"`
+	SignalCount int          `json:"signal_count"`
+	Targets     []string     `json:"targets"`
+	Rules       []string     `json:"rules"`
+	Reasons     []string     `json:"reasons"`
+	FirstSeenAt time.Time    `json:"first_seen_at"`
+	LastSeenAt  time.Time    `json:"last_seen_at"`
+	Events      []AlertEvent `json:"events"`
+}
+
+type AlertCorrelationMetrics struct {
+	OpenEventCount       int     `json:"open_event_count"`
+	IncidentCount        int     `json:"incident_count"`
+	CorrelatedEventCount int     `json:"correlated_event_count"`
+	SingletonCount       int     `json:"singleton_count"`
+	PairComparisons      int     `json:"pair_comparisons"`
+	LinkedPairs          int     `json:"linked_pairs"`
+	CompressionRate      float64 `json:"compression_rate"`
+	AlgorithmVersion     string  `json:"algorithm_version"`
+	WindowMinutes        int     `json:"window_minutes"`
+	Threshold            float64 `json:"threshold"`
+}
+
 type Asset struct {
 	ID        string `json:"id"`
 	ProductID string `json:"product_id"`

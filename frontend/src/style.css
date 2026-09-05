@@ -1,7 +1,18 @@
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  font-family: "MiSans", "HarmonyOS Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: #1f2733;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0;
+  font-synthesis: none;
 }
 * { box-sizing: border-box; }
 html, body, #app { margin: 0; height: 100%; }
-body { min-width: 360px; background: #f0f2f5; }
+body {
+  min-width: 360px;
+  background: #f0f2f5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+button, input, textarea, select { font: inherit; letter-spacing: 0; }
